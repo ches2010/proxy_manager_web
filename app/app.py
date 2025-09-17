@@ -2,15 +2,13 @@
 import os
 import json
 import requests
-from flask import Flask, render_template, jsonify, request # 确保导入 Flask
+from flask import Flask, render_template, jsonify, request, redirect # 导入 redirect
 
 # --- Flask 应用实例 (必须在顶层) ---
-# 这一行必须在文件顶部，不能在 if __name__ == '__main__': 块内
-app = Flask(__name__) 
+app = Flask(__name__)
 
 # --- 配置 ---
-# (你的 OUTPUT_DIR, HTTP_FILE, SOCKS5_FILE, SOURCES 等配置)
-OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__)) # 保存到 app 目录下
 HTTP_FILE = os.path.join(OUTPUT_DIR, "http.txt")
 SOCKS5_FILE = os.path.join(OUTPUT_DIR, "socks5.txt")
 
@@ -145,11 +143,48 @@ def fetch_proxies_task():
         print("[FAILURE] 代理获取或保存失败。")
         return False
 
-# ... (app.py 的其他部分) ...
 
+# --- Flask 路由 ---
+# 新增：根路径 '/' 重定向到 '/index'
+@app.route('/')
+def home():
+    """根路径重定向到 /index"""
+    return redirect('/index')
+
+# 原有的 '/index' 路由保持不变
+@app.route('/index')
+def index():
+    return render_template('index.html')
+
+# 原有的 '/api/fetch_proxies' 路由保持不变
+@app.route('/api/fetch_proxies', methods=['POST'])
+def fetch_proxies():
+    success = fetch_proxies_task()
+    return jsonify({'success': success})
+
+# 原有的 '/api/get_proxies' 路由保持不变
+@app.route('/api/get_proxies/<protocol>')
+def get_proxies(protocol):
+    filename = HTTP_FILE if protocol == 'http' else SOCKS5_FILE if protocol == 'socks5' else None
+    if not filename or not os.path.exists(filename):
+        return jsonify({'proxies': []})
+
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            proxies = [line.strip() for line in f if line.strip()]
+        return jsonify({'proxies': proxies})
+    except Exception as e:
+        print(f"[ERROR] 读取文件 '{filename}' 时出错: {e}")
+        return jsonify({'proxies': [], 'error': 'Failed to read proxy file'}), 500
+
+
+# --- 主程序入口 (用于直接运行 app.py) ---
 if __name__ == '__main__':
-    # 当直接运行此文件时启动 Flask (例如 python -m app.app)
+    # 当直接运行此文件时启动 Flask (例如 python app/app.py)
     # 注意：实际部署时，应使用 WSGI 服务器如 Gunicorn
     # 确保这里绑定的地址和端口与 launch.py 中的 FLASK_HOST, FLASK_PORT 一致
-    app.run(host='127.0.0.1', port=5000, debug=False) 
+    app.run(host='127.0.0.1', port=5000, debug=False)
+
+
+
 
