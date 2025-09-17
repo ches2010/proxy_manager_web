@@ -1,0 +1,193 @@
+/* app/static/style.css */
+
+/* 基础重置和布局 */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background-color: #f0f2f5;
+    padding: 20px;
+}
+
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+    background: #ffffff;
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* 标题 */
+h1, h2 {
+    color: #2c3e50;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+h1 {
+    font-size: 2.2em;
+    border-bottom: 2px solid #3498db;
+    padding-bottom: 10px;
+}
+
+h2 {
+    font-size: 1.5em;
+    margin-top: 30px;
+    border-left: 4px solid #3498db;
+    padding-left: 10px;
+}
+
+/* 按钮 */
+button {
+    padding: 12px 20px;
+    margin: 8px 5px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: bold;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+button:hover {
+    transform: translateY(-2px);
+}
+
+button:active {
+    transform: translateY(0);
+}
+
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    transform: none;
+}
+
+#fetchBtn {
+    background-color: #27ae60; /* Green */
+    color: white;
+}
+
+#fetchBtn:hover:not(:disabled) {
+    background-color: #219653;
+}
+
+#fetchBtn:disabled {
+    background-color: #95a5a6;
+}
+
+#loadConfigBtn, #loadSocks5Btn {
+    background-color: #3498db; /* Blue */
+    color: white;
+}
+
+#loadConfigBtn:hover, #loadSocks5Btn:hover {
+    background-color: #2980b9;
+}
+
+#saveConfigBtn, #loadHttpBtn {
+    background-color: #e67e22; /* Orange */
+    color: white;
+}
+
+#saveConfigBtn:hover, #loadHttpBtn:hover {
+    background-color: #d35400;
+}
+
+/* 状态和信息区域 */
+#status, #configDisplay, #proxyDisplay {
+    margin-top: 25px;
+    padding: 15px;
+    border-radius: 5px;
+    background-color: #ecf0f1;
+    border: 1px solid #bdc3c7;
+    font-size: 1em;
+}
+
+#status {
+    font-weight: bold;
+    text-align: center;
+    background-color: #d5dbdb;
+}
+
+/* 文本区域 */
+textarea {
+    width: 100%;
+    min-height: 250px;
+    padding: 12px;
+    border: 1px solid #bdc3c7;
+    border-radius: 5px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    resize: vertical; /* 允许垂直调整大小 */
+    background-color: #fdfdfd;
+}
+
+textarea:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 5px rgba(52, 152, 219, 0.5);
+}
+
+/* 代理列表显示区域 */
+#proxyDisplay {
+    /* min-height 确保即使内容少也有一定高度 */
+    min-height: 150px;
+    max-height: 400px; /* 限制最大高度 */
+    overflow-y: auto; /* 内容超出时显示垂直滚动条 */
+    background-color: #fdfdfd;
+    padding: 10px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    white-space: pre-wrap; /* 保留换行符和空格，但允许换行 */
+    word-break: break-all; /* 长单词或URL强制换行 */
+}
+
+/* 消息颜色 */
+.error {
+    color: #e74c3c; /* Red */
+}
+
+.success {
+    color: #27ae60; /* Green */
+}
+
+.info {
+    color: #3498db; /* Blue */
+}
+
+/* 响应式设计 */
+@media (max-width: 600px) {
+    .container {
+        padding: 15px;
+    }
+
+    h1 {
+        font-size: 1.8em;
+    }
+
+    h2 {
+        font-size: 1.3em;
+    }
+
+    button {
+        padding: 10px 15px;
+        font-size: 14px;
+        width: 100%;
+        margin: 5px 0;
+    }
+
+    textarea {
+        min-height: 200px;
+    }
+}
+
+
+
