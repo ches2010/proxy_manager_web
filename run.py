@@ -4,17 +4,18 @@ import os
 import time
 import signal
 import requests
+import re
 
 # --- 配置 ---
-FLASK_APP_MODULE = "app.app:app" # Flask 应用模块和实例
-FLASK_HOST = "127.0.0.1" # 仅本地访问，Tunnel负责外部
-FLASK_PORT = 5000
-CLOUDFLARED_CONFIG_PATH = None # 如果使用配置文件，指定路径
-CLOUDFLARED_TOKEN = None # 如果使用令牌，指定令牌
+FLASK_APP_MODULE = "app.app:app"  # Flask 应用模块和实例
+FLASK_HOST = "127.0.0.1"          # 本地绑定地址
+FLASK_PORT = 5000                 # 本地端口
+CLOUDFLARED_EXECUTABLE = "cloudflared" # cloudflared 命令名
 
 # --- 全局进程变量 ---
 flask_process = None
 cloudflared_process = None
+cloudflared_url = None
 
 def signal_handler(sig, frame):
     print("\n正在关闭应用...")
@@ -46,7 +47,7 @@ def start_flask():
         "--port", str(FLASK_PORT)
     ], cwd="app", env={**os.environ, "FLASK_APP": FLASK_APP_MODULE})
     
-    # 简单等待 Flask 启动
+    # 等待 Flask 启动
     time.sleep(3)
     try:
         response = requests.get(f"http://{FLASK_HOST}:{FLASK_PORT}/", timeout=5)
@@ -60,36 +61,64 @@ def start_flask():
     return False
 
 def start_cloudflared():
-    global cloudflared_process
-    print("正在启动 Cloudflared Tunnel...")
-    
-    cmd = ["cloudflared", "tunnel", "--no-autoupdate"]
-    
-    if CLOUDFLARED_TOKEN:
-        cmd.extend(["run", "--token", CLOUDFLARED_TOKEN])
-    elif CLOUDFLARED_CONFIG_PATH:
-        cmd.extend(["--config", CLOUDFLARED_CONFIG_PATH, "run"])
-    else:
-        print("警告: 未配置 CLOUDFLARED_TOKEN 或 CLOUDFLARED_CONFIG_PATH。请手动启动 cloudflared 或在 run.py 中配置。")
-        print("假设你已通过其他方式 (如 Cloudflare Dashboard) 启动了 tunnel 并指向 localhost:5000。")
-        return True # 不启动，但不视为错误
+    global cloudflared_process, cloudflared_url
+    print("正在启动 Cloudflared Quick Tunnel...")
+
+    cmd = [
+        CLOUDFLARED_EXECUTABLE,
+        "tunnel", "--url", f"http://{FLASK_HOST}:{FLASK_PORT}"
+    ]
 
     try:
-        cloudflared_process = subprocess.Popen(cmd)
-        print("Cloudflared Tunnel 启动命令已执行。请查看其输出以获取公网 URL。")
-        return True
+        # 使用 subprocess.PIPE 捕获输出，以便提取 URL
+        cloudflared_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1, # 行缓冲
+            universal_newlines=True
+        )
+        print("Cloudflared Quick Tunnel 启动中... 请稍候...")
+
+        # 实时读取 cloudflared 的输出，寻找 URL
+        url_pattern = re.compile(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com')
+        start_time = time.time()
+        timeout = 30 # 30秒超时
+
+        while cloudflared_process.poll() is None and (time.time() - start_time) < timeout:
+            output_line = cloudflared_process.stdout.readline()
+            if output_line:
+                print(output_line.strip()) # 可选：打印 cloudflared 输出到控制台
+                match = url_pattern.search(output_line)
+                if match:
+                    cloudflared_url = match.group(0)
+                    print(f"\n[SUCCESS] Cloudflared Quick Tunnel 已启动!")
+                    print(f"公网访问地址: {cloudflared_url}")
+                    return True
+            else:
+                time.sleep(0.1) # 避免忙等待
+
+        # 超时或进程退出
+        if cloudflared_process.poll() is not None:
+            print("错误: Cloudflared 进程意外退出。")
+        else:
+            print("错误: 等待 Cloudflared URL 超时。")
+        return False
+
     except FileNotFoundError:
-        print("错误: 未找到 'cloudflared' 命令。请确保它已安装并添加到系统 PATH。")
+        print(f"错误: 未找到 '{CLOUDFLARED_EXECUTABLE}' 命令。请确保它已安装并添加到系统 PATH。")
+        print("安装指南: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/")
         return False
     except Exception as e:
-        print(f"启动 Cloudflared Tunnel 时出错: {e}")
+        print(f"启动 Cloudflared Quick Tunnel 时出错: {e}")
         return False
 
 def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    print("=== Proxy Manager 启动器 ===")
+    print("=== Proxy Manager 启动器 (Quick Tunnels) ===")
 
     flask_ok = start_flask()
     if not flask_ok:
@@ -98,12 +127,15 @@ def main():
 
     tunnel_ok = start_cloudflared()
     if not tunnel_ok:
-        print("Cloudflared Tunnel 启动失败。Flask 应用仍在运行在本地。")
+        print("Cloudflared Quick Tunnel 启动失败。Flask 应用仍在运行在本地。")
         # 不退出，允许本地访问
 
     print("\n--- 应用已启动 ---")
     print(f"本地访问地址: http://{FLASK_HOST}:{FLASK_PORT}")
-    print("请查看 Cloudflared 的输出以获取公网访问地址 (如果已启动)。")
+    if cloudflared_url:
+        print(f"公网访问地址: {cloudflared_url}")
+    else:
+        print("公网访问地址: 未获取到 (请检查 cloudflared 输出)")
     print("按 Ctrl+C 停止所有服务。")
     print("------------------\n")
 
@@ -124,6 +156,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
