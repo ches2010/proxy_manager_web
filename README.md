@@ -29,22 +29,57 @@ cd proxy_manager
 pip install -r requirements.txt
 ```
 
-### 3. 配置 Cloudflare Tunnel (可选但推荐)
+### 3. 安装 Cloudflared (必需)
 
-为了能从外部访问 Web 界面，你需要设置 Cloudflare Tunnel。
+为了能从外部访问 Web 界面，你需要安装 `cloudflared` CLI 工具。它将自动为你创建一个临时的公网 URL (Quick Tunnel)。
 
-1.  注册并登录 [Cloudflare](https://www.cloudflare.com/)。
-2.  在 Cloudflare 仪表板中，导航到 **Zero Trust** > **Access** > **Tunnels**。
-3.  **创建隧道** (Create a tunnel)。
-4.  选择 **Cloudflared** 客户端，并按照指示下载 `cloudflared` CLI 工具（如果尚未安装）。
-5.  按照 Cloudflare 提供的命令安装 Connector (这通常涉及运行一个 `cloudflared` 命令来关联你的机器和隧道)。
-6.  在隧道配置中，添加一个 **Public Hostname**：
-    *   **Subdomain**: (可选，留空则生成随机子域)
-    *   **Domain**: 选择你的 Cloudflare 域名。
-    *   **Path**: `/`
-    *   **Type**: `HTTP`
-    *   **URL**: `localhost:5000` (这是 Flask 应用的本地地址)
-7.  保存配置。
+*   **官方安装指南**: [https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/)
+*   **macOS (Homebrew)**: `brew install cloudflare/cloudflare/cloudflared`
+*   **Linux (Debian/Ubuntu)**:
+    ```bash
+    wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+    sudo dpkg -i cloudflared-linux-amd64.deb
+    ```
+*   **Windows (Chocolatey)**: `choco install cloudflared`
+*   **Windows (Scoop)**: `scoop install cloudflared`
+*   **手动下载**: 从 [GitHub Releases](https://github.com/cloudflare/cloudflared/releases) 下载对应平台的二进制文件，并将其放入系统 PATH。
+
+**验证安装**: 在终端运行 `cloudflared --version`，应能看到版本号。
+
+### 4. 运行应用
+
+使用 launch.py 脚本一键启动 Flask 应用和 Cloudflare Quick Tunnel。
+
+```bash
+python launch.py
+```
+
+*   脚本启动后，Flask 应用将在 `http://localhost:5000` 运行。
+*   `cloudflared` 会自动创建一个临时的公网 URL (格式通常是 `https://<random-subdomain>.trycloudflare.com`)，并在终端中打印出来。
+*   **注意**: Quick Tunnel 生成的 URL 是临时的，每次重启 `cloudflared` 都会变化，并且可能在一段时间不活动后失效。
+
+### 5. 访问界面
+
+*   **本地访问**: 打开浏览器访问 `http://localhost:5000`。
+*   **远程访问**: 打开浏览器访问终端中打印出的公网 URL (例如 `https://abc123.trycloudflare.com`)。
+---
+
+### 3. `app.py` (Flask 后端) - *确认绑定地址*
+
+确保 `app.py` 在直接运行时绑定到 `127.0.0.1` 或 `0.0.0.0`。我们已经在 `run.py` 中通过 `--host 127.0.0.1` 参数确保了这一点。`app.py` 末尾的代码如下：
+
+```python
+# ... (省略前面的代码) ...
+
+if __name__ == '__main__':
+    # 当直接运行此文件时启动 Flask (例如 python -m app.app)
+    # 注意：实际部署时，应使用 WSGI 服务器如 Gunicorn
+    app.run(host='127.0.0.1', port=5000, debug=False) # <-- 这里确保绑定到 127.0.0.1
+```
+
+这个配置是正确的，`cloudflared` 会通过 `http://127.0.0.1:5000` 访问你的 Flask 应用。
+
+---
 
 ### 4. 运行应用
 
