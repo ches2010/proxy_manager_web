@@ -2,13 +2,44 @@
 import os
 import json
 import requests
-from flask import Flask, render_template, jsonify, request, redirect # 导入 redirect
+import traceback
+import logging
+from collections import deque # 用于创建一个有最大长度的列表，作为日志缓冲区
+from flask import Flask, render_template, jsonify, request, redirect
 
-# --- Flask 应用实例 (必须在顶层) ---
+# --- 配置日志 ---
+# 创建一个自定义的日志处理器，将日志存储在内存中
+class InMemoryHandler(logging.Handler):
+    def __init__(self, max_logs=1000):
+        super().__init__()
+        # 使用 deque 可以自动丢弃旧日志，保持列表大小
+        self.log_buffer = deque(maxlen=max_logs)
+
+    def emit(self, record):
+        # 格式化日志记录
+        log_entry = self.format(record)
+        # 添加到缓冲区
+        self.log_buffer.append(log_entry)
+
+# 创建 Flask 应用实例
 app = Flask(__name__)
 
+# --- 设置日志记录 ---
+# 创建自定义处理器实例
+in_memory_handler = InMemoryHandler(max_logs=1000)
+# 设置日志格式
+formatter = logging.Formatter('[%(asctime)s] %(levelname)s in %(module)s: %(message)s')
+in_memory_handler.setFormatter(formatter)
+# 将处理器添加到 Flask 应用的日志记录器
+app.logger.addHandler(in_memory_handler)
+# 设置日志级别
+app.logger.setLevel(logging.INFO)
+# 也确保根日志记录器能捕获来自 requests 等库的日志
+logging.getLogger().addHandler(in_memory_handler)
+logging.getLogger().setLevel(logging.INFO)
+
 # --- 配置 ---
-OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__)) # 保存到 app 目录下
+OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
 HTTP_FILE = os.path.join(OUTPUT_DIR, "http.txt")
 SOCKS5_FILE = os.path.join(OUTPUT_DIR, "socks5.txt")
 
@@ -51,7 +82,7 @@ def deduce_protocol(original_line, default_protocol):
 # --- 保存文件函数 ---
 def save_proxies_to_file(proxies_set, filename):
     if not proxies_set:
-        print(f"\n[-] 代理列表 '{filename}' 为空，无需保存。")
+        app.logger.warning(f"代理列表 '{filename}' 为空，无需保存。")
         return False
 
     try:
@@ -59,21 +90,21 @@ def save_proxies_to_file(proxies_set, filename):
         with open(filename, 'w', encoding='utf-8') as f:
             for proxy in sorted_proxies:
                 f.write(f"{proxy}\n")
-        print(f"\n[SUCCESS] {len(sorted_proxies)} 个代理已成功保存到: {filename}")
+        app.logger.info(f"{len(sorted_proxies)} 个代理已成功保存到: {filename}")
         return True
     except Exception as e:
-        print(f"\n[ERROR] 保存文件 '{filename}' 时出错: {e}")
+        app.logger.error(f"保存文件 '{filename}' 时出错: {e}")
         return False
 
 # --- 核心获取函数 ---
 def fetch_proxies_task():
     """后台任务：获取并保存代理"""
-    print("[*] 开始获取代理...")
+    app.logger.info("开始获取代理...")
     http_proxies = set()
     socks5_proxies = set()
 
     for source in SOURCES:
-        print(f"[*] 正在从 {source['name']} 获取代理列表...")
+        app.logger.info(f"正在从 {source['name']} 获取代理列表...")
         try:
             response = requests.get(source['url'], timeout=15)
             response.raise_for_status()
@@ -96,25 +127,36 @@ def fetch_proxies_task():
                     cleaned_proxy = clean_proxy_line(line)
                 elif source['parser'] == 'json-list':
                      try:
+                         # 处理每行一个 JSON 对象的情况
                          proxy_data = json.loads(line)
                          host = proxy_data.get('ip') or proxy_data.get('host')
                          port = proxy_data.get('port')
                          if host and port:
                              cleaned_proxy = f"{host}:{port}"
                              protocol = source.get('protocol', 'socks5')
-                     except json.JSONDecodeError:
+                     except json.JSONDecodeError as e:
+                         app.logger.warning(f"解析 JSON 行失败 ({source['name']}): {e}")
                          continue
                 elif source['parser'] == 'json':
                     try:
-                        proxy_info = json.loads(line)
-                        host = proxy_info.get("host")
-                        port = proxy_info.get("port")
-                        proxy_type = proxy_info.get("type", source['protocol']).lower()
-                        if host and port:
-                            cleaned_proxy = f"{host}:{port}"
-                            protocol = proxy_type
-                    except json.JSONDecodeError:
-                        continue
+                        # 处理整个响应是一个 JSON 数组的情况
+                        proxies_list = json.loads(content)
+                        for proxy_info in proxies_list:
+                            host = proxy_info.get("host")
+                            port = proxy_info.get("port")
+                            proxy_type = proxy_info.get("type", source['protocol']).lower()
+                            if host and port:
+                                cleaned_proxy = f"{host}:{port}"
+                                protocol = proxy_type
+                                if 'http' in protocol:
+                                    http_proxies.add(f"http://{cleaned_proxy}")
+                                elif 'socks5' in protocol:
+                                    socks5_proxies.add(f"socks5://{cleaned_proxy}")
+                        # 处理完整个列表后跳出循环
+                        break
+                    except json.JSONDecodeError as e:
+                         app.logger.error(f"解析 JSON 响应失败 ({source['name']}): {e}")
+                         break # 解析失败则跳过此源
 
                 if not cleaned_proxy:
                     continue
@@ -126,43 +168,52 @@ def fetch_proxies_task():
 
             new_http = len(http_proxies) - initial_http_count
             new_socks5 = len(socks5_proxies) - initial_socks5_count
-            print(f"[+] 从此来源添加了 {new_http} 个HTTP代理, {new_socks5} 个SOCKS5代理。")
+            app.logger.info(f"从此来源添加了 {new_http} 个HTTP代理, {new_socks5} 个SOCKS5代理。")
 
         except requests.exceptions.RequestException as e:
-            print(f"[!] 从 {source['name']} 获取代理时出错: {e}")
+            app.logger.error(f"从 {source['name']} 获取代理时出错: {e}")
+        except Exception as e:
+            app.logger.error(f"处理 {source['name']} 时发生未预期错误: {e}")
 
-        print("-" * 20)
+        app.logger.info("-" * 20)
     
     http_success = save_proxies_to_file(http_proxies, HTTP_FILE)
     socks5_success = save_proxies_to_file(socks5_proxies, SOCKS5_FILE)
     
     if http_success or socks5_success:
-        print("[SUCCESS] 代理获取和保存完成。")
+        app.logger.info("代理获取和保存完成。")
         return True
     else:
-        print("[FAILURE] 代理获取或保存失败。")
+        app.logger.warning("代理获取或保存失败。")
         return False
 
-
 # --- Flask 路由 ---
-# 新增：根路径 '/' 重定向到 '/index'
+
+# 根路径重定向到 /index
 @app.route('/')
 def home():
-    """根路径重定向到 /index"""
     return redirect('/index')
 
-# 原有的 '/index' 路由保持不变
+# 主页面
 @app.route('/index')
 def index():
     return render_template('index.html')
 
-# 原有的 '/api/fetch_proxies' 路由保持不变
+# API: 触发代理获取
 @app.route('/api/fetch_proxies', methods=['POST'])
-def fetch_proxies():
-    success = fetch_proxies_task()
-    return jsonify({'success': success})
+def fetch_proxies_api():
+    try:
+        app.logger.info("收到获取代理请求...")
+        success = fetch_proxies_task()
+        app.logger.info(f"代理获取任务完成, 结果: {success}")
+        return jsonify({'success': success})
+    except Exception as e:
+        error_msg = f"处理 /api/fetch_proxies 时发生未预期错误: {str(e)}"
+        app.logger.error(error_msg)
+        app.logger.error(traceback.format_exc()) # 记录堆栈跟踪
+        return jsonify({'success': False, 'error': error_msg}), 500
 
-# 原有的 '/api/get_proxies' 路由保持不变
+# API: 获取代理列表
 @app.route('/api/get_proxies/<protocol>')
 def get_proxies(protocol):
     filename = HTTP_FILE if protocol == 'http' else SOCKS5_FILE if protocol == 'socks5' else None
@@ -174,15 +225,19 @@ def get_proxies(protocol):
             proxies = [line.strip() for line in f if line.strip()]
         return jsonify({'proxies': proxies})
     except Exception as e:
-        print(f"[ERROR] 读取文件 '{filename}' 时出错: {e}")
-        return jsonify({'proxies': [], 'error': 'Failed to read proxy file'}), 500
+        error_msg = f"读取文件 '{filename}' 时出错: {e}"
+        app.logger.error(error_msg)
+        return jsonify({'proxies': [], 'error': error_msg}), 500
 
+# 新增 API: 获取后端日志
+@app.route('/api/logs')
+def get_logs():
+    # 从内存处理器中获取日志
+    logs = list(in_memory_handler.log_buffer)
+    return jsonify({'logs': logs})
 
-# --- 主程序入口 (用于直接运行 app.py) ---
+# --- 主程序入口 ---
 if __name__ == '__main__':
-    # 当直接运行此文件时启动 Flask (例如 python app/app.py)
-    # 注意：实际部署时，应使用 WSGI 服务器如 Gunicorn
-    # 确保这里绑定的地址和端口与 launch.py 中的 FLASK_HOST, FLASK_PORT 一致
     app.run(host='127.0.0.1', port=5000, debug=False)
 
 
