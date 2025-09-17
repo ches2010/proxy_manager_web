@@ -1,2 +1,24 @@
-# Google App Engine generated folder
-appengine-generated/
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Generated proxy files (optional, as user might want to keep them)
+# http.txt
+# socks5.txt
