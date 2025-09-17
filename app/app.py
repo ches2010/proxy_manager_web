@@ -138,5 +138,10 @@ def fetch_proxies_task():
         print("[FAILURE] 代理获取或保存失败。")
         return False
 
+# ... (省略前面的代码) ...
 
+if __name__ == '__main__':
+    # 当直接运行此文件时启动 Flask (例如 python -m app.app)
+    # 注意：实际部署时，应使用 WSGI 服务器如 Gunicorn
+    app.run(host='127.0.0.1', port=5000, debug=False) # <-- 这里确保绑定到 127.0.0.1
 
