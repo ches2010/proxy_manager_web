@@ -5,49 +5,53 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>代理获取器</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        h1 { color: #333; }
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f9f9f9; color: #333; }
+        h1 { color: #2c3e50; }
         button {
-            background-color: #4CAF50;
+            background-color: #3498db;
             border: none;
             color: white;
             padding: 10px 20px;
             text-align: center;
             text-decoration: none;
             display: inline-block;
-            font-size: 16px;
+ font-size: 16px;
             margin: 4px 2px;
             cursor: pointer;
             border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
         }
         button:disabled {
-            background-color: #cccccc;
+            background-color: #bdc3c7;
             cursor: not-allowed;
         }
-        #status { margin-top: 20px; font-weight: bold; }
+        #status { margin-top: 20px; font-weight: bold; color: #2c3e50; }
         #proxyLists { margin-top: 20px; }
-        .proxy-section { margin-bottom: 30px; }
-        h2 { color: #555; }
+        .proxy-section { margin-bottom: 30px; background-color: #fff; padding: 15px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h2 { color: #34495e; margin-top: 0; }
         pre {
-            background-color: #f4f4f4;
-            border: 1px solid #ddd;
+            background-color: #ecf0f1;
+            border: 1px solid #bdc3c7;
             padding: 10px;
-            white-space: pre-wrap; /* 允许换行 */
-            word-wrap: break-word; /* 长单词换行 */
+            white-space: pre-wrap;
+            word-wrap: break-word;
             max-height: 300px;
-            overflow-y: auto; /* 垂直滚动条 */
-        }
-        /* 日志区域样式 */
-        #logArea {
-            margin-top: 30px;
-            padding: 10px;
-            border: 1px solid #ccc;
-            background-color: #2c2c2c; /* 深色背景 */
-            color: #f8f8f2; /* 浅色文字 */
+            overflow-y: auto;
+            border-radius: 4px;
             font-family: 'Courier New', Courier, monospace;
             font-size: 14px;
-            max-height: 400px;
-            overflow-y: auto;
+        }
+
+        #logArea {
+            margin-top: 30px;
+            padding: 15px;
+            border: 1px solid #bdc3c7;
+            background-color: #fff;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         #logHeader {
             display: flex;
@@ -55,14 +59,56 @@
             align-items: center;
             margin-bottom: 10px;
         }
+        #logHeader h2 {
+            margin: 0;
+            color: #34495e;
+        }
         #logHeader button {
-            background-color: #555;
+            background-color: #95a5a6;
             font-size: 14px;
             padding: 5px 10px;
         }
-        #logs {
+        #logHeader button:hover {
+             background-color: #7f8c8d;
+        }
+        #logsContainer {
+            background-color: #fdfdfd;
+            border: 1px solid #ddd;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 13px;
             white-space: pre-wrap;
             word-wrap: break-word;
+            line-height: 1.4;
+        }
+        .log-entry {
+            margin: 0 0 2px 0;
+            padding: 2px 0;
+        }
+        .log-info { color: #2c3e50; }
+        .log-warning { color: #e67e22; }
+        .log-error { color: #e74c3c; }
+        .log-debug { color: #95a5a6; }
+
+        /* --- 新增：进度条样式 --- */
+        #progressContainer {
+            width: 100%;
+            background-color: #ecf0f1;
+            border-radius: 5px;
+            margin-top: 10px;
+            display: none; /* 默认隐藏 */
+        }
+        #progressBar {
+            width: 0%;
+            height: 20px;
+            background-color: #3498db;
+            border-radius: 5px;
+            text-align: center;
+            line-height: 20px;
+            color: white;
+            font-size: 12px;
         }
     </style>
 </head>
@@ -71,6 +117,11 @@
     <h1>代理获取器</h1>
     <button id="fetchButton">获取代理</button>
     <div id="status">状态: 等待操作</div>
+    
+    <!-- 新增：进度条 -->
+    <div id="progressContainer">
+        <div id="progressBar">0%</div>
+    </div>
 
     <div id="proxyLists">
         <div class="proxy-section">
@@ -85,13 +136,12 @@
         </div>
     </div>
 
-    <!-- 新增日志显示区域 -->
     <div id="logArea">
         <div id="logHeader">
             <h2>后端日志</h2>
             <button id="clearLogButton">清空日志</button>
         </div>
-        <pre id="logs">正在加载日志...</pre>
+        <div id="logsContainer">正在加载日志...</div>
     </div>
 
     <script>
@@ -99,13 +149,30 @@
         const fetchButton = document.getElementById('fetchButton');
         const httpProxiesPre = document.getElementById('httpProxies');
         const socks5ProxiesPre = document.getElementById('socks5Proxies');
-        // 日志相关元素
-        const logsPre = document.getElementById('logs');
+        const logsContainer = document.getElementById('logsContainer');
         const clearLogButton = document.getElementById('clearLogButton');
+         // 新增：进度条元素
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
 
-        let logFetchInterval; // 用于存储定时器ID
+        let logFetchInterval;
+        let statusFetchInterval; // 用于轮询任务状态
 
-        // 获取并显示后端日志的函数
+        function getLogEntryClass(logLine) {
+             const levelMatch = logLine.match(/\[.*?\]\s+(\w+)/);
+             if (levelMatch && levelMatch[1]) {
+                 const level = levelMatch[1].toUpperCase();
+                 if (level === 'WARNING') {
+                     return 'log-warning';
+                 } else if (level === 'ERROR' || level === 'CRITICAL') {
+                     return 'log-error';
+                 } else if (level === 'DEBUG') {
+                     return 'log-debug';
+                 }
+             }
+             return 'log-info';
+        }
+
         async function fetchAndDisplayLogs() {
             try {
                 const response = await fetch('/api/logs');
@@ -114,22 +181,25 @@
                 }
                 const data = await response.json();
                 const logs = data.logs || [];
-                logsPre.textContent = logs.join('\n'); // 将日志数组用换行符连接
-                // 滚动到底部
-                logsPre.scrollTop = logsPre.scrollHeight;
+                logsContainer.innerHTML = '';
+                logs.forEach(logLine => {
+                    const logEntry = document.createElement('div');
+                    logEntry.className = `log-entry ${getLogEntryClass(logLine)}`;
+                    logEntry.textContent = logLine;
+                    logsContainer.appendChild(logEntry);
+                });
+                logsContainer.scrollTop = logsContainer.scrollHeight;
             } catch (error) {
                 console.error('获取日志失败:', error);
-                logsPre.textContent = `获取日志失败: ${error.message}\n请检查网络连接或后端服务。`;
+                logsContainer.innerHTML = `<div class="log-entry log-error">获取日志失败: ${error.message}</div><div class="log-entry log-error">请检查网络连接或后端服务。</div>`;
             }
         }
 
-        // 开始定时获取日志 (例如每2秒一次)
         function startLogFetching() {
-            fetchAndDisplayLogs(); // 立即获取一次
+            fetchAndDisplayLogs();
             logFetchInterval = setInterval(fetchAndDisplayLogs, 2000);
         }
 
-        // 停止定时获取日志
         function stopLogFetching() {
             if (logFetchInterval) {
                 clearInterval(logFetchInterval);
@@ -137,39 +207,113 @@
             }
         }
 
-        // 清空日志显示区域
         clearLogButton.addEventListener('click', () => {
-            logsPre.textContent = '日志已清空。';
+            logsContainer.innerHTML = '<div class="log-entry log-info">日志已清空。</div>';
         });
 
-        // 获取代理的函数
+        // --- 修改：获取代理 (启动任务) ---
         async function fetchProxies() {
             fetchButton.disabled = true;
-            statusDiv.textContent = '状态: 正在获取...';
+            statusDiv.textContent = '状态: 正在请求启动任务...';
+            statusDiv.style.color = '#2c3e50';
+            progressContainer.style.display = 'block'; // 显示进度条
+            updateProgressBar(10); // 初始进度
 
             try {
                 const response = await fetch('/api/fetch_proxies', { method: 'POST' });
-                // 检查响应是否成功
-                if (!response.ok) {
-                   const errorText = await response.text(); // 尝试获取错误文本
-                   console.error('服务器返回错误状态:', response.status, '响应体:', errorText);
-                   throw new Error(`服务器错误 (${response.status}): ${errorText.substring(0, 200)}...`); // 截取前200字符
-                }
                 const data = await response.json();
-                if (data.success) {
-                    statusDiv.textContent = '状态: 获取成功';
+                
+                if (data.status === 'started') {
+                    statusDiv.textContent = '状态: 任务已启动';
+                    statusDiv.style.color = '#27ae60';
+                    updateProgressBar(30); // 任务启动
+                    startStatusPolling(); // 开始轮询状态
+                } else if (data.status === 'already_running') {
+                     statusDiv.textContent = '状态: 任务已在运行中，请稍后再试';
+                     statusDiv.style.color = '#e67e22';
+                     updateProgressBar(0);
                 } else {
-                    statusDiv.textContent = `状态: 获取失败 (${data.error || '未知错误'})`;
+                     throw new Error(`意外的响应状态: ${JSON.stringify(data)}`);
                 }
             } catch (error) {
-                console.error('获取代理时出错:', error);
-                statusDiv.textContent = `状态: 获取失败 (${error.message})`;
-            } finally {
+                console.error('启动获取代理任务时出错:', error);
+                statusDiv.textContent = `状态: 启动任务失败 (${error.message})`;
+                statusDiv.style.color = '#e74c3c';
+                updateProgressBar(0);
+                fetchButton.disabled = false; // 重新启用按钮
+                progressContainer.style.display = 'none'; // 隐藏进度条
+            }
+        }
+        
+        // --- 新增：更新进度条 ---
+        function updateProgressBar(percent) {
+            progressBar.style.width = percent + '%';
+            progressBar.textContent = percent + '%';
+        }
+
+        // --- 新增：轮询任务状态 ---
+        function startStatusPolling() {
+             // 立即查询一次
+             checkFetchStatus();
+             // 设置定时器，例如每3秒查询一次
+             statusFetchInterval = setInterval(checkFetchStatus, 3000);
+        }
+        
+        function stopStatusPolling() {
+            if (statusFetchInterval) {
+                clearInterval(statusFetchInterval);
+                statusFetchInterval = null;
+            }
+        }
+        
+        async function checkFetchStatus() {
+            try {
+                const response = await fetch('/api/fetch_status');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const statusData = await response.json();
+                
+                // 根据状态更新UI
+                if (statusData.is_running) {
+                    statusDiv.textContent = '状态: 任务正在运行中...';
+                    statusDiv.style.color = '#3498db';
+                    // 可以根据需要调整进度 (这里简化处理)
+                    updateProgressBar(60); 
+                } else {
+                    // 任务已完成或未运行
+                    stopStatusPolling(); // 停止轮询
+                    fetchButton.disabled = false; // 重新启用按钮
+                    progressContainer.style.display = 'none'; // 隐藏进度条
+                    
+                    if (statusData.last_result === true) {
+                        statusDiv.textContent = '状态: 任务完成成功';
+                        statusDiv.style.color = '#27ae60';
+                        updateProgressBar(100);
+                    } else if (statusData.last_result === false) {
+                         statusDiv.textContent = '状态: 任务完成但失败';
+                         statusDiv.style.color = '#e74c3c';
+                         updateProgressBar(100);
+                    } else {
+                         // last_result 为 null，可能从未运行过或被中断
+                         statusDiv.textContent = '状态: 任务未运行';
+                         statusDiv.style.color = '#2c3e50';
+                         updateProgressBar(0);
+                    }
+                }
+            } catch (error) {
+                console.error('查询任务状态时出错:', error);
+                // 可以选择继续轮询或停止
+                // 这里选择停止轮询并显示错误
+                stopStatusPolling();
+                statusDiv.textContent = `状态: 查询任务状态失败 (${error.message})`;
+                statusDiv.style.color = '#e74c3c';
                 fetchButton.disabled = false;
+                progressContainer.style.display = 'none';
             }
         }
 
-        // 加载代理列表的函数
+
         async function loadProxies(protocol) {
             const preElement = protocol === 'http' ? httpProxiesPre : socks5ProxiesPre;
             preElement.textContent = '正在加载...';
@@ -191,17 +335,17 @@
             }
         }
 
-        // 为按钮添加事件监听器
         fetchButton.addEventListener('click', fetchProxies);
 
-        // 页面加载完成后开始获取日志
         window.addEventListener('load', () => {
             startLogFetching();
+            // 页面加载时也可以检查一次任务状态
+            checkFetchStatus(); 
         });
 
-        // 页面关闭前停止获取日志 (可选，但推荐)
         window.addEventListener('beforeunload', () => {
             stopLogFetching();
+            stopStatusPolling(); // 页面关闭时停止轮询
         });
 
     </script>
