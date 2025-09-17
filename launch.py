@@ -9,8 +9,8 @@ import os
 # --- Configuration ---
 FLASK_HOST = "127.0.0.1"
 FLASK_PORT = 5000
-# 关键修改：调整 FLASK_APP_MODULE 路径，使其相对于 app/ 目录正确
-FLASK_APP_MODULE = "app:app" 
+# 最终修正：FLASK_APP_MODULE 应相对于项目根目录
+FLASK_APP_MODULE = "app.app:app" 
 
 def wait_for_port(host, port, timeout=60):
     """等待指定的端口开放"""
@@ -73,16 +73,16 @@ def main():
 
     # 2. 在主线程启动 Flask 应用
     # 构建 Flask 命令
-    # 确保在 app 目录下运行，以便找到模板和静态文件
+    # 不再改变 cwd，直接从项目根目录运行
     flask_env = os.environ.copy()
-    flask_env["FLASK_APP"] = FLASK_APP_MODULE # 使用修正后的模块路径
+    flask_env["FLASK_APP"] = FLASK_APP_MODULE # 使用相对于根目录的模块路径
 
     try:
         print(f"[LAUNCH] Launching Flask app: {FLASK_APP_MODULE} on {FLASK_HOST}:{FLASK_PORT}")
-        # 关键修改：确保 cwd 设置为 'app'
+        # 保持在项目根目录运行
         flask_process = subprocess.run(
             [sys.executable, "-m", "flask", "run", "--host", FLASK_HOST, "--port", str(FLASK_PORT)],
-            cwd="app", # 在 app 目录下运行
+             # 不再设置 cwd="app"
             env=flask_env
         )
         # 如果 Flask 进程结束，脚本也应结束
