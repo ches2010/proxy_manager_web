@@ -1,9 +1,16 @@
+# app/app.py
 import os
 import json
 import requests
+from flask import Flask, render_template, jsonify, request # 确保导入 Flask
+
+# --- Flask 应用实例 (必须在顶层) ---
+# 这一行必须在文件顶部，不能在 if __name__ == '__main__': 块内
+app = Flask(__name__) 
 
 # --- 配置 ---
-OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__)) # 保存到 app 目录下
+# (你的 OUTPUT_DIR, HTTP_FILE, SOCKS5_FILE, SOURCES 等配置)
+OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
 HTTP_FILE = os.path.join(OUTPUT_DIR, "http.txt")
 SOCKS5_FILE = os.path.join(OUTPUT_DIR, "socks5.txt")
 
