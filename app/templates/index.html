@@ -1,35 +1,24 @@
+<!-- app/templates/index.html -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>代理管理器</title>
+    <title>Proxy Manager</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; }
-        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        h1 { text-align: center; color: #333; }
-        button { padding: 10px 15px; margin: 5px; border: none; border-radius: 3px; cursor: pointer; }
-        #fetchBtn { background-color: #4CAF50; color: white; }
-        #fetchBtn:disabled { background-color: #cccccc; cursor: not-allowed; }
-        #status, #configDisplay, #proxyDisplay { margin-top: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 3px; background-color: #fafafa; }
-        #proxyList, #configData { white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; }
-        .error { color: red; }
-        .success { color: green; }
-        .info { color: blue; }
-        textarea { width: 100%; height: 200px; }
-    </style>
 </head>
 <body>
     <div class="container">
-        <h1>代理管理器</h1>
+        <h1>Proxy Manager</h1>
         <button id="fetchBtn">获取代理</button>
         <div id="status">状态: 空闲</div>
 
         <h2>配置</h2>
         <button id="loadConfigBtn">加载配置</button>
         <button id="saveConfigBtn">保存配置</button>
-        <textarea id="configData" placeholder="配置内容"></textarea>
+        <div id="configDisplay">
+            <textarea id="configData" placeholder="配置内容 (JSON 格式)"></textarea>
+        </div>
 
         <h2>代理列表</h2>
         <button id="loadSocks5Btn">加载 SOCKS5 代理</button>
@@ -51,11 +40,23 @@
                 .then(response => response.json())
                 .then(data => {
                     statusDiv.textContent = `状态: ${data.message}`;
+                    statusDiv.className = ''; // Clear previous classes
+                    if (data.message.includes('失败') || data.message.includes('错误')) {
+                        statusDiv.classList.add('error');
+                    } else if (data.message.includes('成功') || data.message.includes('完成')) {
+                        statusDiv.classList.add('success');
+                    } else if (data.message.includes('获取')) {
+                        statusDiv.classList.add('info');
+                    }
                     fetchBtn.disabled = data.running;
                 })
-                .catch(error => console.error('获取状态失败:', error));
+                .catch(error => {
+                    console.error('获取状态失败:', error);
+                    statusDiv.textContent = `状态: 获取失败 (${error.message})`;
+                    statusDiv.className = 'error';
+                });
         }
-        setInterval(updateStatus, 2000); // 每2秒更新一次状态
+        const statusInterval = setInterval(updateStatus, 2000);
 
         // --- 获取代理 ---
         fetchBtn.addEventListener('click', () => {
@@ -67,26 +68,37 @@
                     return response.json();
                 })
                 .then(data => {
-                    statusDiv.innerHTML = `<span class="info">${data.message}</span>`;
+                    statusDiv.textContent = data.message;
+                    statusDiv.className = 'info';
                 })
                 .catch(error => {
-                    statusDiv.innerHTML = `<span class="error">错误: ${error.message}</span>`;
+                    statusDiv.textContent = `错误: ${error.message}`;
+                    statusDiv.className = 'error';
                 });
         });
 
         // --- 配置管理 ---
         document.getElementById('loadConfigBtn').addEventListener('click', () => {
             fetch('/api/config')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                         configDataTextarea.value = `错误: ${data.error}`;
-                    } else {
-                        configDataTextarea.value = JSON.stringify(data, null, 2);
+                .then(response => {
+                    if (!response.ok) {
+                        if (response.status === 404) {
+                             throw new Error('配置文件未找到');
+                        } else {
+                            return response.json().then(err => { throw new Error(err.error || '加载失败'); });
+                        }
                     }
+                    return response.json();
+                })
+                .then(data => {
+                    configDataTextarea.value = JSON.stringify(data, null, 2);
+                    statusDiv.textContent = "配置加载成功";
+                    statusDiv.className = 'success';
                 })
                 .catch(error => {
-                    configDataTextarea.value = `加载配置失败: ${error}`;
+                    configDataTextarea.value = `加载配置失败: ${error.message}`;
+                    statusDiv.textContent = `错误: ${error.message}`;
+                    statusDiv.className = 'error';
                 });
         });
 
@@ -105,39 +117,64 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(configObj)
             })
-            .then(response => response.json())
+            .then(response => {
+                 if (!response.ok) {
+                     return response.json().then(err => { throw new Error(err.message || '保存失败'); });
+                 }
+                 return response.json();
+            })
             .then(data => {
                 if (data.status === 'success') {
-                    statusDiv.innerHTML = `<span class="success">${data.message}</span>`;
+                    statusDiv.textContent = data.message;
+                    statusDiv.className = 'success';
                 } else {
-                    statusDiv.innerHTML = `<span class="error">${data.message}</span>`;
+                    throw new Error(data.message);
                 }
             })
             .catch(error => {
-                statusDiv.innerHTML = `<span class="error">保存配置失败: ${error}</span>`;
+                statusDiv.textContent = `错误: ${error.message}`;
+                statusDiv.className = 'error';
             });
         });
 
         // --- 代理列表展示 ---
         function loadProxies(type) {
             fetch(`/api/proxies?type=${type}`)
-                .then(response => response.json())
+                .then(response => {
+                     if (!response.ok) {
+                         if (response.status === 404) {
+                              return { proxies: [], message: '代理文件不存在' };
+                         } else {
+                             return response.json().then(err => { throw new Error(err.error || '加载失败'); });
+                         }
+                     }
+                     return response.json();
+                })
                 .then(data => {
                     if (data.error) {
                         proxyListPre.textContent = `错误: ${data.error}`;
                     } else if (data.proxies) {
                         proxyListPre.textContent = data.proxies.join('\n') + `\n\n总计: ${data.count} 个`;
+                        statusDiv.textContent = `已加载 ${data.count} 个 ${type.toUpperCase()} 代理`;
+                        statusDiv.className = 'success';
                     } else {
                         proxyListPre.textContent = data.message || '未知响应';
                     }
                 })
                 .catch(error => {
-                    proxyListPre.textContent = `加载代理失败: ${error}`;
+                    proxyListPre.textContent = `加载代理失败: ${error.message}`;
+                    statusDiv.textContent = `错误: ${error.message}`;
+                    statusDiv.className = 'error';
                 });
         }
 
         document.getElementById('loadSocks5Btn').addEventListener('click', () => loadProxies('socks5'));
         document.getElementById('loadHttpBtn').addEventListener('click', () => loadProxies('http'));
+
+        // 页面卸载时清理
+        window.addEventListener('beforeunload', () => {
+             clearInterval(statusInterval);
+        });
 
     </script>
 </body>
