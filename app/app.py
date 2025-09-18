@@ -1,4 +1,3 @@
-# app/app.py
 import os
 import sys
 import json
@@ -12,7 +11,8 @@ import threading
 import subprocess
 from datetime import datetime, timedelta
 from collections import OrderedDict
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, copy_current_request_context
+import threading
 
 # --- 导入项目内部模块 ---
 # 使用相对导入，因为 proxy_fetcher.py 与 app.py 在同一目录 (app/)
@@ -54,6 +54,9 @@ class State:
         self.rotation_history = [] # 简单的轮换历史列表
 
 state = State()
+
+# --- 新增：用于跟踪获取任务状态 ---
+fetch_status = {"in_progress": False, "last_result": None}
 
 # --- Flask App 初始化 ---
 app = Flask(__name__, static_folder='static', template_folder='templates')
@@ -219,81 +222,94 @@ async def validate_proxies_async(protocol, test_url, num_threads=100):
     state.last_validation_time = datetime.now()
 
 
+# --- 修改：run_validation_task 不再返回 jsonify ---
 def run_validation_task(protocol='all'):
     """运行代理验证任务"""
-    if state.validation_in_progress:
-        warning_msg = "Validation task is already running."
-        logger.warning(warning_msg)
-        state.logs.append(f"[WARNING] {datetime.now().isoformat()} - {warning_msg}")
-        return jsonify({"status": "error", "message": "Validation already in progress"}), 429
+    # 使用应用上下文
+    with app.app_context():
+        if state.validation_in_progress:
+            warning_msg = "Validation task is already running."
+            logger.warning(warning_msg)
+            state.logs.append(f"[WARNING] {datetime.now().isoformat()} - {warning_msg}")
+            # 不再返回 jsonify
+            return # 或者可以设置一个内部状态变量
 
-    state.validation_in_progress = True
-    try:
-        logger.info("Proxy validation task started.")
-        state.logs.append(f"[INFO] {datetime.now().isoformat()} - Proxy validation task started.")
-        num_threads = CONFIG.get("general", {}).get("validation_threads", 100)
-        
-        # 确定要验证的协议
-        protocols_to_validate = ['http', 'socks5'] if protocol == 'all' else [protocol]
+        state.validation_in_progress = True
+        try:
+            logger.info("Proxy validation task started.")
+            state.logs.append(f"[INFO] {datetime.now().isoformat()} - Proxy validation task started.")
+            num_threads = CONFIG.get("general", {}).get("validation_threads", 100)
+            
+            # 确定要验证的协议
+            protocols_to_validate = ['http', 'socks5'] if protocol == 'all' else [protocol]
 
-        # 为每个协议创建并运行异步任务
-        async def run_all_validations():
-            tasks = [
-                validate_proxies_async(proto, "http://httpbin.org/ip", num_threads)
-                for proto in protocols_to_validate
-            ]
-            await asyncio.gather(*tasks)
+            # 为每个协议创建并运行异步任务
+            async def run_all_validations():
+                tasks = [
+                    validate_proxies_async(proto, "http://httpbin.org/ip", num_threads)
+                    for proto in protocols_to_validate
+                ]
+                await asyncio.gather(*tasks)
 
-        # 在新事件循环中运行（如果不在已有循环中）
-        if sys.platform == 'win32':
-             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        asyncio.run(run_all_validations())
+            # 在新事件循环中运行（如果不在已有循环中）
+            if sys.platform == 'win32':
+                 asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            asyncio.run(run_all_validations())
 
-        success_msg = "Proxy validation task completed successfully."
-        logger.info(success_msg)
-        state.logs.append(f"[INFO] {datetime.now().isoformat()} - {success_msg}")
-        return jsonify({"status": "success", "message": "Validation completed"}), 200
-    except Exception as e:
-        error_msg = f"Proxy validation task failed: {e}"
-        logger.error(error_msg)
-        state.logs.append(f"[ERROR] {datetime.now().isoformat()} - {error_msg}")
-        return jsonify({"status": "error", "message": f"Validation failed: {str(e)}"}), 500
-    finally:
-        state.validation_in_progress = False
-
-
-def run_fetch_task():
-    """运行代理获取任务"""
-    if state.fetching_in_progress:
-        warning_msg = "Fetching task is already running."
-        logger.warning(warning_msg)
-        state.logs.append(f"[WARNING] {datetime.now().isoformat()} - {warning_msg}")
-        return jsonify({"status": "error", "message": "Fetching already in progress"}), 429
-
-    state.fetching_in_progress = True
-    try:
-        logger.info("Proxy fetching task started.")
-        state.logs.append(f"[INFO] {datetime.now().isoformat()} - Proxy fetching task started.")
-        success = proxy_fetcher.fetch_proxies_task()
-        if success:
-            # 获取成功后，重新加载文件到内存
-            load_proxies_from_files()
-            success_msg = "Proxy fetching task completed and proxies reloaded."
+            success_msg = "Proxy validation task completed successfully."
             logger.info(success_msg)
             state.logs.append(f"[INFO] {datetime.now().isoformat()} - {success_msg}")
-            return jsonify({"status": "success", "message": "Proxies fetched and reloaded"}), 200
-        else:
-            error_msg = "Proxy fetching task failed."
+            # 不再返回 jsonify
+            # return jsonify({"status": "success", "message": "Validation completed"}), 200
+        except Exception as e:
+            error_msg = f"Proxy validation task failed: {e}"
             logger.error(error_msg)
             state.logs.append(f"[ERROR] {datetime.now().isoformat()} - {error_msg}")
-            return jsonify({"status": "error", "message": "Fetching failed"}), 500
-    except Exception as e:
-        error_msg = f"Proxy fetching task failed with exception: {e}"
-        logger.error(error_msg)
-        state.logs.append(f"[ERROR] {datetime.now().isoformat()} - {error_msg}")
-        return jsonify({"status": "error", "message": f"Fetching failed: {str(e)}"}), 500
-    finally:
-        state.fetching_in_progress = False
+            # 不再返回 jsonify
+            # return jsonify({"status": "error", "message": f"Validation failed: {str(e)}"}), 500
+        finally:
+            state.validation_in_progress = False
+
+
+# --- 修改：run_fetch_task 不再返回 jsonify ---
+def run_fetch_task():
+    """运行代理获取任务"""
+    # 使用应用上下文
+    with app.app_context():
+        global fetch_status # 使用全局状态变量
+        fetch_status["in_progress"] = True
+        fetch_status["last_result"] = None
+        
+        try:
+            logger.info("Proxy fetching task started.")
+            state.logs.append(f"[INFO] {datetime.now().isoformat()} - Proxy fetching task started.")
+            success = proxy_fetcher.fetch_proxies_task()
+            if success:
+                # 获取成功后，重新加载文件到内存
+                load_proxies_from_files()
+                success_msg = "Proxy fetching task completed and proxies reloaded."
+                logger.info(success_msg)
+                state.logs.append(f"[INFO] {datetime.now().isoformat()} - {success_msg}")
+                fetch_status["last_result"] = "success"
+                # 不再返回 jsonify
+                # return jsonify({"status": "success", "message": "Proxies fetched and reloaded"}), 200
+            else:
+                error_msg = "Proxy fetching task failed."
+                logger.error(error_msg)
+                state.logs.append(f"[ERROR] {datetime.now().isoformat()} - {error_msg}")
+                fetch_status["last_result"] = "error"
+                # 不再返回 jsonify
+                # return jsonify({"status": "error", "message": "Fetching failed"}), 500
+        except Exception as e:
+            error_msg = f"Proxy fetching task failed with exception: {e}"
+            logger.error(error_msg)
+            state.logs.append(f"[ERROR] {datetime.now().isoformat()} - {error_msg}")
+            fetch_status["last_result"] = f"exception: {e}"
+            # 不再返回 jsonify
+            # return jsonify({"status": "error", "message": f"Fetching failed: {str(e)}"}), 500
+        finally:
+            fetch_status["in_progress"] = False
+            state.fetching_in_progress = False # 兼容旧状态检查
 
 
 # --- IP 轮换逻辑 (已修复) ---
@@ -373,17 +389,28 @@ def api_rotate_proxy(protocol):
     else:
         return jsonify({"status": "error", "message": f"Failed to rotate {protocol} proxy. No proxies available or error occurred."}), 400
 
-# 原来是 @app.route('/api/tasks/fetch', methods=['POST'])
+# --- 修改：/api/fetch_proxies 路由 ---
 @app.route('/api/fetch_proxies', methods=['POST']) # 匹配前端 /api/fetch_proxies
 def api_fetch_proxies():
     # 在后台线程运行，避免阻塞 Flask
+    # 检查是否已经在进行中
+    if fetch_status["in_progress"] or state.fetching_in_progress:
+         return jsonify({"status": "error", "message": "Fetching already in progress"}), 429
+
+    # 启动后台线程
+    state.fetching_in_progress = True # 设置旧状态标志以兼容性
     thread = threading.Thread(target=run_fetch_task)
     thread.start()
+    # 直接返回响应，不依赖 run_fetch_task 的返回值
     return jsonify({"status": "started", "message": "Fetching task started"}), 202
 
-# 原来是 @app.route('/api/tasks/validate', methods=['POST'])
+# --- 修改：/api/validate_proxies 路由 ---
 @app.route('/api/validate_proxies', methods=['POST']) # 假设前端有这个调用，路径匹配
 def api_validate_proxies():
+    # 检查是否已经在进行中
+    if state.validation_in_progress:
+         return jsonify({"status": "error", "message": "Validation already in progress"}), 429
+
     data = request.get_json()
     protocol = data.get('protocol', 'all')
     if protocol not in ['http', 'socks5', 'all']:
@@ -392,6 +419,7 @@ def api_validate_proxies():
     # 在后台线程运行，避免阻塞 Flask
     thread = threading.Thread(target=lambda: run_validation_task(protocol))
     thread.start()
+    # 直接返回响应，不依赖 run_validation_task 的返回值
     return jsonify({"status": "started", "message": f"Validation task for {protocol} started"}), 202
 
 # 原来是 @app.route('/api/status')
@@ -399,7 +427,7 @@ def api_validate_proxies():
 def get_status():
     return jsonify({
         "validation_in_progress": state.validation_in_progress,
-        "fetching_in_progress": state.fetching_in_progress,
+        "fetching_in_progress": state.fetching_in_progress or fetch_status["in_progress"], # 兼容性检查
         "last_validation_time": state.last_validation_time.isoformat() if state.last_validation_time else None,
         "http_proxy_count": len(state.validated_proxies.get('http', {})),
         "socks5_proxy_count": len(state.validated_proxies.get('socks5', {})),
@@ -440,15 +468,33 @@ def get_rotation_history():
         history_to_return = state.rotation_history
     return jsonify(history_to_return)
 
-# --- 新增：修复问题的关键路由 ---
+# --- 新增/修改：修复问题的关键路由 ---
 # 前端 JavaScript 正在轮询此端点以获取获取任务的状态
 @app.route('/api/fetch_status')
 def get_fetch_status():
     """
     返回获取代理任务的当前状态。
     """
+    # 结合新旧状态标志
+    in_progress = fetch_status["in_progress"] or state.fetching_in_progress
+    last_result = fetch_status["last_result"]
+    
+    # 简单的状态映射，使前端更容易理解
+    if in_progress:
+        display_status = "running"
+    elif last_result == "success":
+        display_status = "completed"
+    elif last_result and "error" in last_result:
+        display_status = "failed"
+    elif last_result and "exception" in last_result:
+        display_status = "failed"
+    else:
+        display_status = "idle" # 或 "unknown"
+        
     return jsonify({
-        "fetching_in_progress": state.fetching_in_progress,
+        "fetching_in_progress": in_progress,
+        "status": display_status,
+        "last_result": last_result # 可选，提供详细信息
         # 可以根据需要添加更多状态信息
         # "last_fetch_time": state.last_fetch_time.isoformat() if hasattr(state, 'last_fetch_time') and state.last_fetch_time else None,
         # "fetch_error": getattr(state, 'fetch_error_message', None) # 如果有错误信息的话
@@ -521,7 +567,3 @@ if __name__ == '__main__':
     # 注意：当通过 `flask run` 启动时，不会直接执行到这里
     # 但如果你直接运行 `python app/app.py`，它会执行
     app.run(debug=True) # 通常由 Flask CLI 控制 debug 模式
-
-
-
-
