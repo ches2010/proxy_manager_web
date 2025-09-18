@@ -15,7 +15,7 @@ from collections import OrderedDict
 from flask import Flask, jsonify, render_template, request
 
 # --- 导入项目内部模块 ---
-# 确保 proxy_fetcher.py 与 app.py 在同一目录 (app/)
+# 使用相对导入，因为 proxy_fetcher.py 与 app.py 在同一目录 (app/)
 from . import proxy_fetcher
 
 # --- 配置 ---
@@ -42,6 +42,9 @@ class State:
         self.failure_threshold = CONFIG.get("general", {}).get("failure_threshold", 3)
         self.auto_retest_enabled = CONFIG.get("general", {}).get("auto_retest_enabled", True)
         self.auto_retest_interval = CONFIG.get("general", {}).get("auto_retest_interval", 5) * 60 # Convert to seconds
+        # --- 新增状态用于日志和轮换历史 ---
+        self.logs = [] # 简单的日志列表
+        self.rotation_history = [] # 简单的轮换历史列表
 
 state = State()
 
@@ -64,13 +67,17 @@ def load_config():
         state.auto_retest_enabled = CONFIG.get("general", {}).get("auto_retest_enabled", True)
         state.auto_retest_interval = CONFIG.get("general", {}).get("auto_retest_interval", 5) * 60
         logger.info("Configuration reloaded.")
+        state.logs.append(f"[INFO] {datetime.now().isoformat()} - Configuration reloaded.")
     except Exception as e:
-        logger.error(f"Failed to reload configuration: {e}")
+        error_msg = f"[ERROR] Failed to reload configuration: {e}"
+        logger.error(error_msg)
+        state.logs.append(error_msg)
 
 
 def load_proxies_from_files():
     """从本地文件加载代理"""
     logger.info("Loading proxies from local files...")
+    state.logs.append(f"[INFO] {datetime.now().isoformat()} - Loading proxies from local files...")
     http_file = proxy_fetcher.HTTP_FILE
     socks5_file = proxy_fetcher.SOCKS5_FILE
 
@@ -89,15 +96,21 @@ def load_proxies_from_files():
                                 'status': 'unchecked'
                             }
                 logger.info(f"Loaded {len(proxies)} {protocol} proxies from {filename}")
+                state.logs.append(f"[INFO] {datetime.now().isoformat()} - Loaded {len(proxies)} {protocol} proxies from {filename}")
             except Exception as e:
-                logger.error(f"Error reading {filename}: {e}")
+                error_msg = f"[ERROR] Error reading {filename}: {e}"
+                logger.error(error_msg)
+                state.logs.append(error_msg)
         else:
-            logger.warning(f"Proxy file {filename} not found.")
+            warning_msg = f"[WARNING] Proxy file {filename} not found."
+            logger.warning(warning_msg)
+            state.logs.append(warning_msg)
         return proxies
 
     state.validated_proxies['http'] = read_proxies(http_file, 'http')
     state.validated_proxies['socks5'] = read_proxies(socks5_file, 'socks5')
     logger.info("Finished loading proxies from files.")
+    state.logs.append(f"[INFO] {datetime.now().isoformat()} - Finished loading proxies from files.")
 
 
 async def test_single_proxy(session, proxy_url, test_url, timeout=5):
@@ -135,9 +148,11 @@ async def test_single_proxy(session, proxy_url, test_url, timeout=5):
 async def validate_proxies_async(protocol, test_url, num_threads=100):
     """异步验证指定协议的代理"""
     logger.info(f"Starting asynchronous validation for {protocol} proxies...")
+    state.logs.append(f"[INFO] {datetime.now().isoformat()} - Starting asynchronous validation for {protocol} proxies...")
     proxies_to_test = list(state.validated_proxies.get(protocol, {}).keys())
     if not proxies_to_test:
         logger.info(f"No {protocol} proxies to validate.")
+        state.logs.append(f"[INFO] {datetime.now().isoformat()} - No {protocol} proxies to validate.")
         return
 
     timeout = aiohttp.ClientTimeout(total=10) # Overall request timeout
@@ -158,7 +173,9 @@ async def validate_proxies_async(protocol, test_url, num_threads=100):
     failed_proxies = []
     for proxy, result in zip(proxies_to_test, results):
         if isinstance(result, Exception):
-            logger.error(f"Exception during validation of {proxy}: {result}")
+            error_msg = f"[ERROR] Exception during validation of {proxy}: {result}"
+            logger.error(error_msg)
+            state.logs.append(error_msg)
             failed_proxies.append(proxy)
             continue
 
@@ -179,7 +196,9 @@ async def validate_proxies_async(protocol, test_url, num_threads=100):
             current_failures = state.failed_counts.get(proxy, 0) + 1
             state.failed_counts[proxy] = current_failures
             if current_failures >= state.failure_threshold:
-                logger.info(f"Proxy {proxy} failed {current_failures} times, removing.")
+                info_msg = f"[INFO] Proxy {proxy} failed {current_failures} times, removing."
+                logger.info(info_msg)
+                state.logs.append(info_msg)
                 state.failed_counts.pop(proxy, None) # Remove from failed count after removal
             # Note: In this async version, we don't immediately remove from state.validated_proxies
             # We rebuild it from working_proxies at the end.
@@ -187,19 +206,24 @@ async def validate_proxies_async(protocol, test_url, num_threads=100):
     # Update global state
     # Rebuild validated_proxies for this protocol with only working ones, in order
     state.validated_proxies[protocol] = working_proxies
-    logger.info(f"Validation complete for {protocol}. Working: {len(working_proxies)}, Failed: {len(failed_proxies)}")
+    success_msg = f"Validation complete for {protocol}. Working: {len(working_proxies)}, Failed: {len(failed_proxies)}"
+    logger.info(success_msg)
+    state.logs.append(f"[INFO] {datetime.now().isoformat()} - {success_msg}")
     state.last_validation_time = datetime.now()
 
 
 def run_validation_task(protocol='all'):
     """运行代理验证任务"""
     if state.validation_in_progress:
-        logger.warning("Validation task is already running.")
+        warning_msg = "Validation task is already running."
+        logger.warning(warning_msg)
+        state.logs.append(f"[WARNING] {datetime.now().isoformat()} - {warning_msg}")
         return jsonify({"status": "error", "message": "Validation already in progress"}), 429
 
     state.validation_in_progress = True
     try:
         logger.info("Proxy validation task started.")
+        state.logs.append(f"[INFO] {datetime.now().isoformat()} - Proxy validation task started.")
         num_threads = CONFIG.get("general", {}).get("validation_threads", 100)
         
         # 确定要验证的协议
@@ -218,10 +242,14 @@ def run_validation_task(protocol='all'):
              asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         asyncio.run(run_all_validations())
 
-        logger.info("Proxy validation task completed successfully.")
+        success_msg = "Proxy validation task completed successfully."
+        logger.info(success_msg)
+        state.logs.append(f"[INFO] {datetime.now().isoformat()} - {success_msg}")
         return jsonify({"status": "success", "message": "Validation completed"}), 200
     except Exception as e:
-        logger.error(f"Proxy validation task failed: {e}")
+        error_msg = f"Proxy validation task failed: {e}"
+        logger.error(error_msg)
+        state.logs.append(f"[ERROR] {datetime.now().isoformat()} - {error_msg}")
         return jsonify({"status": "error", "message": f"Validation failed: {str(e)}"}), 500
     finally:
         state.validation_in_progress = False
@@ -230,23 +258,32 @@ def run_validation_task(protocol='all'):
 def run_fetch_task():
     """运行代理获取任务"""
     if state.fetching_in_progress:
-        logger.warning("Fetching task is already running.")
+        warning_msg = "Fetching task is already running."
+        logger.warning(warning_msg)
+        state.logs.append(f"[WARNING] {datetime.now().isoformat()} - {warning_msg}")
         return jsonify({"status": "error", "message": "Fetching already in progress"}), 429
 
     state.fetching_in_progress = True
     try:
         logger.info("Proxy fetching task started.")
+        state.logs.append(f"[INFO] {datetime.now().isoformat()} - Proxy fetching task started.")
         success = proxy_fetcher.fetch_proxies_task()
         if success:
             # 获取成功后，重新加载文件到内存
             load_proxies_from_files()
-            logger.info("Proxy fetching task completed and proxies reloaded.")
+            success_msg = "Proxy fetching task completed and proxies reloaded."
+            logger.info(success_msg)
+            state.logs.append(f"[INFO] {datetime.now().isoformat()} - {success_msg}")
             return jsonify({"status": "success", "message": "Proxies fetched and reloaded"}), 200
         else:
-            logger.error("Proxy fetching task failed.")
+            error_msg = "Proxy fetching task failed."
+            logger.error(error_msg)
+            state.logs.append(f"[ERROR] {datetime.now().isoformat()} - {error_msg}")
             return jsonify({"status": "error", "message": "Fetching failed"}), 500
     except Exception as e:
-        logger.error(f"Proxy fetching task failed with exception: {e}")
+        error_msg = f"Proxy fetching task failed with exception: {e}"
+        logger.error(error_msg)
+        state.logs.append(f"[ERROR] {datetime.now().isoformat()} - {error_msg}")
         return jsonify({"status": "error", "message": f"Fetching failed: {str(e)}"}), 500
     finally:
         state.fetching_in_progress = False
@@ -259,7 +296,9 @@ def rotate_proxy(protocol):
     
     # --- 修复部分：添加缩进的代码块 ---
     if not validated_dict:
-        logger.warning(f"No validated proxies available to rotate for protocol: {protocol}")
+        warning_msg = f"No validated proxies available to rotate for protocol: {protocol}"
+        logger.warning(warning_msg)
+        state.logs.append(f"[WARNING] {datetime.now().isoformat()} - {warning_msg}")
         # 根据应用逻辑，可以选择返回 None 或抛出异常
         return None # 表示轮换失败，因为没有代理可轮换
 
@@ -270,22 +309,38 @@ def rotate_proxy(protocol):
         validated_dict[proxy] = details
         # 更新全局状态中的代理字典（如果 state.validated_proxies[protocol] 是直接引用，则此步可能非必需，但更安全）
         state.validated_proxies[protocol] = validated_dict 
-        logger.info(f"Rotated proxy for {protocol}: {proxy}")
+        info_msg = f"Rotated proxy for {protocol}: {proxy}"
+        logger.info(info_msg)
+        # 记录轮换历史
+        state.rotation_history.append({
+            'timestamp': datetime.now().isoformat(),
+            'protocol': protocol,
+            'proxy': proxy
+        })
+         # 限制历史记录大小，例如只保留最后 100 条
+        if len(state.rotation_history) > 100:
+            state.rotation_history.pop(0) # 移除最旧的记录
+
+        state.logs.append(f"[INFO] {datetime.now().isoformat()} - {info_msg}")
         # 返回刚刚被轮换（移动）的那个代理
         return proxy
     except Exception as e:
-        logger.error(f"Error rotating proxy for {protocol}: {e}")
+        error_msg = f"Error rotating proxy for {protocol}: {e}"
+        logger.error(error_msg)
+        state.logs.append(f"[ERROR] {datetime.now().isoformat()} - {error_msg}")
         # 轮换过程中出错也返回 None
         return None
 
 
-# --- Flask 路由 ---
+# --- Flask 路由 (已修改以匹配前端) ---
 @app.route('/')
 def index():
     return render_template('index.html')
 
 
-@app.route('/api/proxies')
+# --- 修改路由路径以匹配前端 ---
+# 原来是 @app.route('/api/proxies')
+@app.route('/api/validated_proxies') # 匹配前端 /api/validated_proxies
 def get_proxies():
     protocol = request.args.get('protocol', 'all')
     if protocol == 'all':
@@ -297,8 +352,10 @@ def get_proxies():
         data = [{'proxy': k, **v} for k, v in state.validated_proxies.get(protocol, {}).items()]
     return jsonify(data)
 
-
-@app.route('/api/proxy/rotate/<protocol>', methods=['POST'])
+# 原来是 @app.route('/api/proxy/rotate/<protocol>', methods=['POST'])
+# 注意：前端可能通过 GET 请求轮换，或者这个路由可能不存在于前端。根据你的 app.py 逻辑，轮换是 POST。
+# 如果前端是 GET，需要修改。这里假设前端是 POST。
+@app.route('/api/proxy/rotate/<protocol>', methods=['POST']) # 保持原样，因为前端 JS 通常用 POST
 def api_rotate_proxy(protocol):
     if protocol not in ['http', 'socks5']:
         return jsonify({"status": "error", "message": "Invalid protocol"}), 400
@@ -309,16 +366,16 @@ def api_rotate_proxy(protocol):
     else:
         return jsonify({"status": "error", "message": f"Failed to rotate {protocol} proxy. No proxies available or error occurred."}), 400
 
-
-@app.route('/api/tasks/fetch', methods=['POST'])
+# 原来是 @app.route('/api/tasks/fetch', methods=['POST'])
+@app.route('/api/fetch_proxies', methods=['POST']) # 匹配前端 /api/fetch_proxies
 def api_fetch_proxies():
     # 在后台线程运行，避免阻塞 Flask
     thread = threading.Thread(target=run_fetch_task)
     thread.start()
     return jsonify({"status": "started", "message": "Fetching task started"}), 202
 
-
-@app.route('/api/tasks/validate', methods=['POST'])
+# 原来是 @app.route('/api/tasks/validate', methods=['POST'])
+@app.route('/api/validate_proxies', methods=['POST']) # 假设前端有这个调用，路径匹配
 def api_validate_proxies():
     data = request.get_json()
     protocol = data.get('protocol', 'all')
@@ -330,8 +387,8 @@ def api_validate_proxies():
     thread.start()
     return jsonify({"status": "started", "message": f"Validation task for {protocol} started"}), 202
 
-
-@app.route('/api/status')
+# 原来是 @app.route('/api/status')
+@app.route('/api/service_status') # 匹配前端 /api/service_status
 def get_status():
     return jsonify({
         "validation_in_progress": state.validation_in_progress,
@@ -344,12 +401,37 @@ def get_status():
         "failure_threshold": state.failure_threshold
     })
 
-
+# 原来是 @app.route('/api/config/reload', methods=['POST'])
+# 前端可能没有直接调用这个，但保留以备后用
 @app.route('/api/config/reload', methods=['POST'])
 def reload_config():
     load_config()
     return jsonify({"status": "success", "message": "Configuration reloaded"}), 200
 
+# --- 新增路由以匹配前端 ---
+@app.route('/api/logs') # 匹配前端 /api/logs
+def get_logs():
+    # 返回存储在 state.logs 中的日志
+    # 可以添加查询参数来限制返回的日志数量，例如 ?limit=50
+    limit = request.args.get('limit', type=int)
+    if limit and limit > 0:
+        # 返回最后 limit 条日志
+        logs_to_return = state.logs[-limit:]
+    else:
+        # 返回所有日志（注意：在生产环境中这可能不是好主意）
+        logs_to_return = state.logs
+    return jsonify(logs_to_return)
+
+@app.route('/api/rotation_history') # 匹配前端 /api/rotation_history
+def get_rotation_history():
+     # 返回存储在 state.rotation_history 中的轮换历史
+     # 同样可以添加查询参数限制
+    limit = request.args.get('limit', type=int)
+    if limit and limit > 0:
+        history_to_return = state.rotation_history[-limit:]
+    else:
+        history_to_return = state.rotation_history
+    return jsonify(history_to_return)
 
 # --- 后台任务 ---
 def auto_fetch_task():
@@ -363,6 +445,7 @@ def auto_fetch_task():
     # 暂时只调用 proxy_fetcher 的任务
     if any([fofa_config.get("enabled"), hunter_config.get("enabled")]):
         logger.info("Auto-fetch from FOFA/Hunter is configured but logic needs implementation in proxy_fetcher.")
+        state.logs.append(f"[INFO] {datetime.now().isoformat()} - Auto-fetch from FOFA/Hunter is configured but logic needs implementation in proxy_fetcher.")
     
     # 调用通用 fetch 任务
     run_fetch_task()
@@ -373,6 +456,7 @@ def auto_retest_task():
     while True:
         if state.auto_retest_enabled and not state.validation_in_progress:
             logger.info("Starting scheduled auto-retest...")
+            state.logs.append(f"[INFO] {datetime.now().isoformat()} - Starting scheduled auto-retest...")
             run_validation_task('all')
         time.sleep(state.auto_retest_interval)
 
@@ -387,12 +471,14 @@ def start_background_tasks():
     retest_thread = threading.Thread(target=auto_retest_task, daemon=True)
     retest_thread.start()
     logger.info("Background tasks started.")
+    state.logs.append(f"[INFO] {datetime.now().isoformat()} - Background tasks started.")
 
 
 # --- 应用启动逻辑 ---
 def main():
     """主函数"""
     logger.info("Starting Proxy Manager application...")
+    state.logs.append(f"[INFO] {datetime.now().isoformat()} - Starting Proxy Manager application...")
     
     # 初始加载代理
     load_proxies_from_files()
@@ -405,6 +491,7 @@ def main():
     # thread.start()
     
     logger.info("Proxy Manager application initialized.")
+    state.logs.append(f"[INFO] {datetime.now().isoformat()} - Proxy Manager application initialized.")
 
 
 if __name__ == '__main__':
