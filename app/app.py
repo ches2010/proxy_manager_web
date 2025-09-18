@@ -529,7 +529,57 @@ def stop_local_socks5_proxy():
         state.local_service_status['socks5_running'] = False
 
 # --- IP 轮换逻辑 ---
+# 假设必要的导入和 state 对象已定义
+# from collections import OrderedDict
+# import logging
+# import state # 或其他方式访问全局状态
+
+# --- IP 轮换逻辑 ---
 def rotate_proxy(protocol):
     """手动轮换指定协议的代理"""
     validated_dict = state.validated_proxies.get(protocol, OrderedDict())
     if not validated_dict:
+        # --- 修复部分：添加缩进的代码块 ---
+        # 如果没有可用的已验证代理，记录日志并返回失败或默认值
+        print(f"No validated proxies available for protocol: {protocol}") # 或使用 logging
+        # 可以选择抛出异常或返回特定值
+        # raise ValueError(f"No validated proxies for {protocol}")
+        return None # 或者返回一个表示失败的特定对象
+
+    # --- 原有逻辑的其余部分应该放在这里 ---
+    # 例如：
+    # try:
+    #     # 移除并获取第一个键值对
+    #     proxy, details = validated_dict.popitem(last=False)
+    #     # 将其移动到末尾，实现轮换
+    #     validated_dict[proxy] = details
+    #     # 更新全局状态（如果需要）
+    #     state.validated_proxies[protocol] = validated_dict
+    #     print(f"Rotated proxy for {protocol}: {proxy}")
+    #     return proxy
+    # except Exception as e:
+    #     print(f"Error rotating proxy for {protocol}: {e}")
+    #     return None
+
+    # 如果上面是完整逻辑，确保返回语句在所有路径上
+    # 如果逻辑更复杂，确保所有 if/else/try/except 分支都有明确的返回或操作
+
+# --- 示例用法（如果需要）---
+# class State:
+#     def __init__(self):
+#         self.validated_proxies = {
+#             'http': OrderedDict([('proxy1', 'details1'), ('proxy2', 'details2')]),
+#             'https': OrderedDict()
+#         }
+#
+# state = State()
+#
+# result = rotate_proxy('https')
+# print(f"Rotate result for https: {result}")
+#
+# result = rotate_proxy('http')
+# print(f"Rotate result for http: {result}")
+
+
+
+
