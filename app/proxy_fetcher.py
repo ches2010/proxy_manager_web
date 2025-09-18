@@ -23,10 +23,6 @@ SOURCES = [
 
 # --- 辅助函数：IP:PORT 格式校验 ---
 def is_valid_ip_port(proxy_str):
-    """
-    校验是否为合法的 IPv4:PORT 格式
-    示例: 1.2.3.4:8080
-    """
     if not isinstance(proxy_str, str):
         return False
     pattern = r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,5}$'
@@ -47,25 +43,18 @@ def is_valid_ip_port(proxy_str):
 
 # --- 清洗代理行 ---
 def clean_proxy_line(line):
-    """从原始行中提取出 IP:PORT 格式"""
     line = line.strip()
     if not line:
         return None
-
-    # 移除协议头
     for proto in ['http://', 'https://', 'socks4://', 'socks5://']:
         if line.startswith(proto):
             line = line[len(proto):]
-
-    # 移除 user:pass@
     if '@' in line:
         line = line.split('@')[-1]
-
-    # 提取 IP:PORT
-    parts = line.split(':', 1)  # 只分割一次
+    parts = line.split(':', 1)
     if len(parts) == 2:
         ip = parts[0].strip()
-        port_part = parts[1].split()[0].strip()  # 取第一个词作为端口（忽略后面可能的路径或注释）
+        port_part = parts[1].split()[0].strip()
         if ip and port_part.isdigit():
             candidate = f"{ip}:{port_part}"
             if is_valid_ip_port(candidate):
@@ -79,8 +68,8 @@ def deduce_protocol(original_line, default_protocol):
         return 'socks5'
     if 'socks4' in line_lower:
         return 'socks4'
-    if 'socks' in line_lower:
-        return default_protocol
+    if 'https' in line_lower:
+        return 'http'  # https 代理也走 http:// 前缀
     if 'http' in line_lower:
         return 'http'
     return default_protocol
@@ -90,7 +79,6 @@ def save_proxies_to_file(proxies_set, filename):
     if not proxies_set:
         print(f"\n[-] 代理列表 '{filename}' 为空，无需保存。")
         return False
-
     try:
         sorted_proxies = sorted(list(proxies_set))
         with open(filename, 'w', encoding='utf-8') as f:
@@ -104,7 +92,6 @@ def save_proxies_to_file(proxies_set, filename):
 
 # --- 核心获取函数 ---
 def fetch_proxies_task():
-    """后台任务：获取并保存代理"""
     print("[*] 开始获取代理...")
     http_proxies = set()
     socks5_proxies = set()
@@ -112,54 +99,56 @@ def fetch_proxies_task():
     for source in SOURCES:
         print(f"[*] 正在从 {source['name']} 获取代理列表...")
         try:
-            response = requests.get(source['url'], timeout=15)
-            response.raise_for_status()
-
+            # 添加重试机制
+            for attempt in range(3):
+                try:
+                    response = requests.get(source['url'], timeout=15)
+                    response.raise_for_status()
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        raise e
+                    time.sleep(1)
+            
             initial_http_count = len(http_proxies)
             initial_socks5_count = len(socks5_proxies)
-
             content = response.text.strip()
 
-            # ✅ 修复：json-list 是整个 JSON 数组，不是每行一个对象
+            # ✅ 修复：json-list 解析
             if source['parser'] == 'json-list':
                 try:
-                    proxy_list = json.loads(content)  # 解析整个 JSON 数组
+                    proxy_list = json.loads(content)
                     if not isinstance(proxy_list, list):
                         raise ValueError("Expected JSON array")
-
                     for item in proxy_list:
                         if not isinstance(item, dict):
                             continue
                         host = item.get('ip') or item.get('host')
                         port = item.get('port')
                         if host and port:
-                            # 尝试构造 IP:PORT
-                            port_str = str(port).split()[0]  # 防止端口带空格或单位
+                            port_str = str(port).split()[0]
                             candidate = f"{host}:{port_str}"
                             if is_valid_ip_port(candidate):
+                                # ✅ 修复：根据源配置的 protocol 判断
                                 protocol = source.get('protocol', 'socks5')
                                 if 'http' in protocol:
                                     http_proxies.add(f"http://{candidate}")
                                 elif 'socks5' in protocol:
                                     socks5_proxies.add(f"socks5://{candidate}")
-
                     new_http = len(http_proxies) - initial_http_count
                     new_socks5 = len(socks5_proxies) - initial_socks5_count
                     print(f"[+] 从此来源添加了 {new_http} 个HTTP代理, {new_socks5} 个SOCKS5代理。")
                     print("-" * 20)
-                    continue  # 跳过后续按行处理
-
+                    continue
                 except (json.JSONDecodeError, ValueError, TypeError) as e:
                     print(f"[!] JSON 解析失败 ({source['name']}): {e}")
                     print("-" * 20)
                     continue
 
-            # 处理 text 或 json（按行解析）
             lines = content.split('\n')
             for line in lines:
                 if not line.strip():
                     continue
-
                 protocol = source['protocol']
                 cleaned_proxy = None
 
@@ -183,7 +172,6 @@ def fetch_proxies_task():
                     except (json.JSONDecodeError, TypeError):
                         continue
 
-                # 校验并添加
                 if cleaned_proxy and is_valid_ip_port(cleaned_proxy):
                     if 'http' in protocol:
                         http_proxies.add(f"http://{cleaned_proxy}")
@@ -193,13 +181,10 @@ def fetch_proxies_task():
             new_http = len(http_proxies) - initial_http_count
             new_socks5 = len(socks5_proxies) - initial_socks5_count
             print(f"[+] 从此来源添加了 {new_http} 个HTTP代理, {new_socks5} 个SOCKS5代理。")
-
         except requests.exceptions.RequestException as e:
             print(f"[!] 从 {source['name']} 获取代理时出错: {e}")
-
         print("-" * 20)
 
-    # 保存结果
     http_success = save_proxies_to_file(http_proxies, HTTP_FILE)
     socks5_success = save_proxies_to_file(socks5_proxies, SOCKS5_FILE)
 
