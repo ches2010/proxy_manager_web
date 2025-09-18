@@ -16,7 +16,14 @@ from flask import Flask, jsonify, render_template, request
 
 # --- 导入项目内部模块 ---
 # 使用相对导入，因为 proxy_fetcher.py 与 app.py 在同一目录 (app/)
-from . import proxy_fetcher
+# 注意：如果直接运行此脚本，相对导入会失败。应通过 `flask run` 或包方式运行。
+# 如果遇到导入问题，请检查启动方式或调整导入路径。
+try:
+    from . import proxy_fetcher
+except ImportError:
+    # Fallback for direct execution or different structure
+    import proxy_fetcher
+
 
 # --- 配置 ---
 # 从 config.json 加载配置
@@ -432,6 +439,21 @@ def get_rotation_history():
     else:
         history_to_return = state.rotation_history
     return jsonify(history_to_return)
+
+# --- 新增：修复问题的关键路由 ---
+# 前端 JavaScript 正在轮询此端点以获取获取任务的状态
+@app.route('/api/fetch_status')
+def get_fetch_status():
+    """
+    返回获取代理任务的当前状态。
+    """
+    return jsonify({
+        "fetching_in_progress": state.fetching_in_progress,
+        # 可以根据需要添加更多状态信息
+        # "last_fetch_time": state.last_fetch_time.isoformat() if hasattr(state, 'last_fetch_time') and state.last_fetch_time else None,
+        # "fetch_error": getattr(state, 'fetch_error_message', None) # 如果有错误信息的话
+    })
+
 
 # --- 后台任务 ---
 def auto_fetch_task():
