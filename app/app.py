@@ -16,7 +16,7 @@ from flask import Flask, jsonify, render_template, request
 
 # --- 导入项目内部模块 ---
 # 确保 proxy_fetcher.py 与 app.py 在同一目录 (app/)
-import proxy_fetcher
+from . import proxy_fetcher
 
 # --- 配置 ---
 # 从 config.json 加载配置
