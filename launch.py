@@ -5,13 +5,13 @@ import time
 import socket
 import sys
 import os
+import queue
+import shutil
 
 # --- Configuration ---
 FLASK_HOST = "127.0.0.1"
 FLASK_PORT = 5000
-# 推荐方式：直接指向 app.py 文件 (相对于项目根目录)
-# Flask 会自动在此文件中查找名为 'app' 的 Flask 实例
-FLASK_APP_MODULE = "app.app" 
+FLASK_APP_MODULE = "app.app"
 
 def wait_for_port(host, port, timeout=60):
     """等待指定的端口开放"""
@@ -25,9 +25,18 @@ def wait_for_port(host, port, timeout=60):
         time.sleep(0.5)
     return False
 
+def read_stderr(pipe, q):
+    """在独立线程中读取 stderr，避免阻塞"""
+    try:
+        for line in iter(pipe.readline, ''):
+            q.put(line)
+    except Exception:
+        pass
+    finally:
+        pipe.close()
+
 def cloudflared_thread(host, port):
     """在后台线程中启动 cloudflared"""
-    # 等待 Flask 应用启动
     print(f"[LAUNCH] Waiting for Flask app to start on {host}:{port}...")
     if not wait_for_port(host, port, timeout=60):
         print("[ERROR] Flask app did not start within the timeout period.", file=sys.stderr)
@@ -36,10 +45,14 @@ def cloudflared_thread(host, port):
     print(f"[LAUNCH] Flask app is running. Starting cloudflared tunnel...")
     print("[LAUNCH] If it gets stuck here, cloudflared might be having issues or taking time to connect.")
 
+    cloudflared_path = shutil.which("cloudflared")
+    if not cloudflared_path:
+        print("[ERROR] 'cloudflared' command not found. Please install it from https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/", file=sys.stderr)
+        return
+
     try:
-        # 启动 cloudflared 进程
         process = subprocess.Popen(
-            ["cloudflared", "tunnel", "--url", f"http://{host}:{port}"],
+            [cloudflared_path, "tunnel", "--url", f"http://{host}:{port}"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -47,46 +60,44 @@ def cloudflared_thread(host, port):
             universal_newlines=True
         )
 
-        # 实时读取 stderr 输出以获取 URL
-        for line in process.stderr:
-            if ".trycloudflare.com " in line:
-                # 提取并打印 URL
-                url_start = line.find("http")
-                if url_start != -1:
-                    url = line[url_start:].split()[0]
-                    print(f"\n[SUCCESS] Public URL: {url}\n")
-            # 可选：打印其他 cloudflared 日志
-            # print(line, end='')
+        q = queue.Queue()
+        t = threading.Thread(target=read_stderr, args=(process.stderr, q), daemon=True)
+        t.start()
 
-    except FileNotFoundError:
-        print("[ERROR] 'cloudflared' command not found. Please install it from https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/", file=sys.stderr)
+        printed_url = False
+        while True:
+            try:
+                line = q.get(timeout=1)
+                if ".trycloudflare.com " in line and not printed_url:
+                    url_start = line.find("http")
+                    if url_start != -1:
+                        url = line[url_start:].split()[0]
+                        print(f"\n[SUCCESS] Public URL: {url}\n")
+                        printed_url = True
+            except queue.Empty:
+                if process.poll() is not None:
+                    break
+                continue
+
     except Exception as e:
         print(f"[ERROR] Failed to start cloudflared: {e}", file=sys.stderr)
-
 
 def main():
     """主函数：启动 Flask 应用和 cloudflared"""
     print("[LAUNCH] Starting Proxy Manager...")
 
-    # 1. 在后台线程启动 cloudflared
     tunnel_thread = threading.Thread(target=cloudflared_thread, args=(FLASK_HOST, FLASK_PORT), daemon=True)
     tunnel_thread.start()
 
-    # 2. 在主线程启动 Flask 应用
-    # 构建 Flask 命令
-    # 保持在项目根目录运行
     flask_env = os.environ.copy()
-    flask_env["FLASK_APP"] = FLASK_APP_MODULE # 使用直接指向文件的方式
+    flask_env["FLASK_APP"] = FLASK_APP_MODULE
 
     try:
         print(f"[LAUNCH] Launching Flask app: {FLASK_APP_MODULE} on {FLASK_HOST}:{FLASK_PORT}")
-        # 保持在项目根目录运行
         flask_process = subprocess.run(
-            [sys.executable, "-m", "flask", "run", "--host", FLASK_HOST, "--port", str(FLASK_PORT)],
-            # 不设置 cwd
+            [sys.executable, "-m", "flask", "run", "--host", FLASK_HOST, "--port", str(FLASK_PORT), "--no-reload"],
             env=flask_env
         )
-        # 如果 Flask 进程结束，脚本也应结束
         print("[LAUNCH] Flask app process finished.")
     except KeyboardInterrupt:
         print("\n[LAUNCH] Received interrupt signal. Shutting down...")
@@ -95,6 +106,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
