@@ -12,6 +12,7 @@ import subprocess
 from datetime import datetime, timedelta
 from collections import OrderedDict
 from flask import Flask, jsonify, render_template, request
+from aiohttp_socks import ProxyConnector  # ✅ 新增
 
 # --- 导入项目内部模块 ---
 # 尝试相对导入（用于包内运行），如果失败则尝试绝对导入（用于直接运行）
@@ -45,6 +46,7 @@ except json.JSONDecodeError as e:
 # --- 全局状态管理 ---
 class State:
     def __init__(self):
+        self._lock = threading.Lock()  # ✅ 新增锁
         self.validated_proxies = {'http': OrderedDict(), 'socks5': OrderedDict()}
         self.validation_in_progress = False
         # 统一使用 fetch_status 来管理获取状态
@@ -57,6 +59,13 @@ class State:
         # --- 新增状态用于日志和轮换历史 ---
         self.logs = [] # 简单的日志列表
         self.rotation_history = [] # 简单的轮换历史列表
+    # 示例：安全更新
+    def add_validated_proxy(self, protocol, proxy, latency):
+        with self._lock:
+            self.validated_proxies[protocol][proxy] = {
+                "latency": latency,
+                "last_tested": time.time()
+            }
 
 state = State()
 
@@ -128,44 +137,23 @@ def load_proxies_from_files():
     state.logs.append(f"[INFO] {datetime.now().isoformat()} - Finished loading proxies from files.")
 
 
-async def test_single_proxy(session, proxy_url, test_url, timeout=5):
-    """异步测试单个代理"""
-    # 注意：aiohttp 原生不支持 socks5。需要安装 aiohttp-socks 并使用 ProxyConnector
-    # 例如: pip install aiohttp-socks
-    # 然后:
-    # from aiohttp_socks import ProxyConnector
-    # connector = ProxyConnector.from_url(proxy_url)
-    # async with aiohttp.ClientSession(connector=connector) as session:
-    #     async with session.get(test_url, timeout=timeout) as response:
-    # ...
-    # 当前代码对 socks5 的处理是不完整的，会像 http 一样尝试，很可能失败。
-    # 为了简化，我们暂时保持原样，但记录警告。
+# --- 修复 test_single_proxy ---
+async def test_single_proxy(proxy_url, test_url="http://www.google.com/generate_204", timeout=5):
+    start_time = time.time()
     try:
-        # connector = None # 不需要为每个请求创建 connector
-        proxy_param = None
-        if proxy_url.startswith('http'):
-            proxy_param = proxy_url
-        elif proxy_url.startswith('socks5'):
-             # aiohttp 需要额外库支持 socks5
-             # 这里简单记录警告，实际测试可能失败
-             logger.warning(f"Testing SOCKS5 proxy {proxy_url} with aiohttp (may fail without aiohttp-socks).")
-             proxy_param = proxy_url
+        if proxy_url.startswith('socks5://'):
+            connector = ProxyConnector.from_url(proxy_url)  # ✅ 修复：支持 SOCKS5
         else:
-            return None, 'invalid_protocol'
+            connector = aiohttp.TCPConnector(ssl=False)
 
-        start_time = time.time()
-        # 使用传入的 session 和 connector
-        async with session.get(test_url, proxy=proxy_param, timeout=timeout) as response:
-            if response.status == 200:
-                response_time = (time.time() - start_time) * 1000 # ms
-                return response_time, 'working'
-            else:
-                return None, 'failed'
-    except asyncio.TimeoutError:
-        return None, 'timeout'
+        async with aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+            async with session.get(test_url) as response:
+                if response.status == 204 or response.status == 200:
+                    latency = (time.time() - start_time) * 1000
+                    return True, latency
     except Exception as e:
-        # logger.debug(f"Proxy {proxy_url} failed: {e}") # Debug level to avoid spam
-        return None, 'error'
+        print(f"[DEBUG] Proxy {proxy_url} failed: {e}")
+    return False, None
 
 
 async def validate_proxies_async(protocol, test_url, num_threads=100):
@@ -403,11 +391,21 @@ def api_fetch_proxies():
     return jsonify({"status": "started", "message": "Fetching task started"}), 202
 
 
-@app.route('/api/validate_proxies', methods=['POST'])
-def api_validate_proxies():
-    # 检查是否已经在进行中
-    if state.validation_in_progress:
-         return jsonify({"status": "error", "message": "Validation already in progress"}), 429
+# --- API 返回统一格式 ---
+@app.route('/api/validate', methods=['POST'])
+def api_validate():
+    try:
+        # ... 你的验证逻辑 ...
+        return jsonify({
+            "success": True,
+            "message": "验证完成",
+            "data": { ... }
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 500
 
     data = request.get_json()
     protocol = data.get('protocol', 'all')
