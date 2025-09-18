@@ -484,6 +484,38 @@ def get_fetch_status():
     })
 
 
+
+@app.route('/api/service/start', methods=['POST'])
+def start_service():
+    data = request.get_json()
+    protocol = data.get('protocol')  # 'http' or 'socks5'
+    if protocol not in ['http', 'socks5']:
+        return jsonify({"success": False, "message": "Invalid protocol"}), 400
+
+    if start_proxy_service(protocol):
+        return jsonify({"success": True, "message": f"{protocol.upper()} 服务已启动"})
+    else:
+        return jsonify({"success": False, "message": f"{protocol.upper()} 服务已在运行"})
+
+@app.route('/api/service/stop', methods=['POST'])
+def stop_service():
+    data = request.get_json()
+    protocol = data.get('protocol')
+    if protocol not in ['http', 'socks5']:
+        return jsonify({"success": False, "message": "Invalid protocol"}), 400
+
+    if stop_proxy_service(protocol):
+        return jsonify({"success": True, "message": f"{protocol.upper()} 服务已停止"})
+    else:
+        return jsonify({"success": False, "message": f"{protocol.upper()} 服务未运行"})
+
+@app.route('/api/service/status', methods=['GET'])
+def service_status():
+    return jsonify({
+        "success": True,
+        "data": get_service_status()
+    })
+
 # --- 后台任务 ---
 def auto_fetch_task():
     """自动获取代理的后台任务"""
