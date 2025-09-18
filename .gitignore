@@ -22,3 +22,6 @@ Thumbs.db
 # Generated proxy files (optional, as user might want to keep them)
 # http.txt
 # socks5.txt
+http.txt
+socks5.txt
+app.log
