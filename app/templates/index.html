@@ -6,20 +6,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>高级代理获取器</title>
     <!-- 引入外部CSS -->
-    <link rel="stylesheet" href="static/style.css">
-    <!-- 引入 jQuery 库 -->
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"> <!-- 使用 url_for 确保路径正确 -->
 </head>
 
 <body>
     <div class="container">
         <h1>高级代理获取器</h1>
 
+        <!-- 消息容器 -->
+        <div class="messages"></div> <!-- 添加消息容器 -->
+
         <!-- 1. 获取代理 -->
         <div class="section">
             <h2>1. 获取代理</h2>
-            <!-- 修改 ID 以匹配 script.js -->
-            <button id="fetch-http-btn">获取代理</button>
+            <!-- 为“获取代理”按钮添加 ID -->
+            <button id="fetch-http-btn" class="btn">获取 HTTP 代理</button>
+            <button id="fetch-socks5-btn" class="btn">获取 SOCKS5 代理</button>
             <div id="fetchStatus" class="status status-info">状态: 等待操作</div>
             <div class="progress-bar-container" id="fetchProgressContainer" style="display:none;">
                 <div class="progress-bar" id="fetchProgressBar" style="width: 0%;">0%</div>
@@ -29,8 +31,8 @@
         <!-- 2. 验证代理 -->
         <div class="section">
             <h2>2. 验证代理</h2>
-            <!-- 修改 ID 以匹配 script.js -->
-            <button id="validate-btn">验证代理质量</button>
+            <!-- 为“验证代理质量”按钮添加 ID -->
+            <button id="validate-btn" class="btn">验证代理质量</button>
             <div id="validateStatus" class="status status-info">状态: 等待操作</div>
             <div class="progress-bar-container" id="validateProgressContainer" style="display:none;">
                 <div class="progress-bar" id="validateProgressBar" style="width: 0%;">0%</div>
@@ -39,14 +41,14 @@
             <h3>已验证的代理</h3>
             <div class="flex-row">
                 <div>
-                    <!-- 修改 ID 以匹配 script.js -->
-                    <button id="fetch-http-btn">加载 HTTP 代理</button>
-                    <span id="httpCount"> (0)</span>
+                    <!-- 为“加载 HTTP 代理”按钮添加唯一 ID -->
+                    <button id="load-validated-http-btn" class="btn">加载 HTTP 代理</button>
+                    <span id="httpCount"> (<span id="validated-http-count">0</span>)</span>
                 </div>
                 <div>
-                    <!-- 修改 ID 以匹配 script.js -->
-                    <button id="fetch-socks5-btn">加载 SOCKS5 代理</button>
-                    <span id="socks5Count"> (0)</span>
+                    <!-- 为“加载 SOCKS5 代理”按钮添加唯一 ID -->
+                    <button id="load-validated-socks5-btn" class="btn">加载 SOCKS5 代理</button>
+                    <span id="socks5Count"> (<span id="validated-socks5-count">0</span>)</span>
                 </div>
             </div>
             <div class="proxy-table-container">
@@ -82,53 +84,44 @@
                     <option value="">-- 请选择 --</option>
                 </select>
             </div>
-            <!-- 修改 ID 以匹配 script.js -->
-            <button id="start-http-service-btn" class="btn-success">启动服务</button>
-            <!-- 修改 ID 以匹配 script.js -->
-            <button id="stop-http-service-btn" class="btn-danger">停止服务</button>
+            <!-- 为服务控制按钮添加 ID -->
+            <button id="start-http-service-btn" class="btn btn-success">启动 HTTP 服务</button>
+            <button id="stop-http-service-btn" class="btn btn-danger">停止 HTTP 服务</button>
+            <button id="start-socks5-service-btn" class="btn btn-success">启动 SOCKS5 服务</button>
+            <button id="stop-socks5-service-btn" class="btn btn-danger">停止 SOCKS5 服务</button>
             <div id="serviceStatus" class="status status-info">状态: 服务未启动</div>
             
             <h3>当前使用代理</h3>
             <div class="flex-row">
-                <div><strong>HTTP:</strong> <span id="currentHttpProxy">-</span></div>
-                <div><strong>SOCKS5:</strong> <span id="currentSocks5Proxy">-</span></div>
+                <div><strong>HTTP:</strong> <span id="http-proxy-display">-</span></div> <!-- 添加 ID -->
+                <div><strong>SOCKS5:</strong> <span id="socks5-proxy-display">-</span></div> <!-- 添加 ID -->
+            </div>
+             <div class="flex-row">
+                <div>HTTP 服务: <span id="http-service-status">🔴 已停止</span></div> <!-- 添加 ID -->
+                <div>SOCKS5 服务: <span id="socks5-service-status">🔴 已停止</span></div> <!-- 添加 ID -->
             </div>
         </div>
 
         <!-- 4. IP 轮换 -->
         <div class="section">
             <h2>4. IP 轮换</h2>
-            <!-- 修改 ID 以匹配 script.js -->
-            <button id="rotate-http-btn">轮换 HTTP IP</button>
-            <!-- 修改 ID 以匹配 script.js -->
-            <button id="rotate-socks5-btn">轮换 SOCKS5 IP</button>
+            <!-- 为轮换按钮添加 ID -->
+            <button id="rotate-http-btn" class="btn">轮换 HTTP IP</button>
+            <button id="rotate-socks5-btn" class="btn">轮换 SOCKS5 IP</button>
             
             <h3>自动轮换</h3>
             <div class="form-group">
                 <label for="rotationInterval">轮换间隔 (秒):</label>
                 <input type="number" id="rotationInterval" min="10" value="300">
             </div>
-            <!-- 修改 ID 以匹配 script.js -->
-            <button id="start-auto-rotate-btn" class="btn-warning">启动自动轮换</button>
-            <!-- 修改 ID 以匹配 script.js -->
-            <button id="stop-auto-rotate-btn" class="btn-warning">停止自动轮换</button>
+            <!-- 为自动轮换按钮添加 ID -->
+            <button id="start-auto-rotate-btn" class="btn btn-warning">启动自动轮换</button>
+            <button id="stop-auto-rotate-btn" class="btn btn-warning">停止自动轮换</button>
             <div id="rotationStatus" class="status status-info">状态: 自动轮换未启动</div>
             
             <h3>轮换历史</h3>
-            <div class="proxy-table-container">
-                <table id="rotationHistoryTable">
-                    <thead>
-                        <tr>
-                            <th>时间</th>
-                            <th>协议</th>
-                            <th>旧代理</th>
-                            <th>新代理</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <!-- 动态填充 -->
-                    </tbody>
-                </table>
+            <div id="rotation-history-list"> <!-- 添加 ID -->
+                <div class="empty-state">暂无轮换记录</div>
             </div>
         </div>
 
@@ -137,12 +130,12 @@
             <h2>5. 原始代理列表 (可选)</h2>
             <div class="flex-row">
                 <div>
-                    <!-- 修改 ID 以匹配 script.js -->
-                    <button id="fetch-http-btn">加载原始 HTTP 代理</button> (注意：这个ID和上面的“获取代理”按钮ID冲突了，需要修改)
+                    <!-- 为“加载原始 HTTP 代理”按钮添加唯一 ID -->
+                    <button id="load-raw-http-btn" class="btn">加载原始 HTTP 代理</button>
                 </div>
                 <div>
-                    <!-- 修改 ID 以匹配 script.js -->
-                    <button id="fetch-socks5-btn">加载原始 SOCKS5 代理</button> (注意：这个ID和上面的“加载HTTP代理”按钮ID冲突了，需要修改)
+                    <!-- 为“加载原始 SOCKS5 代理”按钮添加唯一 ID -->
+                    <button id="load-raw-socks5-btn" class="btn">加载原始 SOCKS5 代理</button>
                 </div>
             </div>
             <pre id="rawProxiesPre">点击按钮加载原始代理列表</pre>
@@ -152,16 +145,18 @@
         <div id="logArea">
             <div id="logHeader">
                 <h2>后端日志</h2>
-                 <!-- 修改 ID 以匹配 script.js -->
-                <button id="clear-log-btn">清空日志</button>
+                 <!-- 为“清空日志”按钮添加 ID -->
+                <button id="clear-log-btn" class="btn">清空日志</button>
             </div>
             <div id="logsContainer">正在加载日志...</div>
         </div>
+        
+        <!-- 刷新按钮 (如果需要) -->
+        <button id="refresh-btn" class="btn">🔄 刷新</button> <!-- 添加刷新按钮 -->
     </div>
 
-    <!-- 引入你自己的外部JS (放在 body 底部是常见做法，但放在 head 里配合 defer/async 也可以) -->
-    <!-- 确保 jQuery 在 script.js 之前加载 -->
-    <script src="static/script.js"></script>
+    <!-- 引入外部JS -->
+    <script src="{{ url_for('static', filename='script.js') }}"></script> <!-- 使用 url_for 确保路径正确 -->
 </body>
 
 </html>
