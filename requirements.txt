@@ -1,7 +1,6 @@
-Flask==2.3.2
-requests==2.31.0
-aiohttp
-aiohttp_socks
-
-
-
+Flask==3.0.3
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.2.2
+ttkbootstrap==1.10.1 ; # 仅用于兼容性导入，实际Web前端不使用
+# 添加 hq.py 和 modules 可能需要的其他依赖
