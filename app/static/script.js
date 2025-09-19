@@ -348,11 +348,22 @@ function stopAutoRefresh() {
     }
 }
 
+
 // 页面加载完成后初始化
 document.addEventListener('DOMContentLoaded', () => {
-    // 保存按钮原始文本
-    $$('.btn').forEach(btn => {
-        btn.dataset.originalText = btn.innerHTML;
+    // 保存按钮原始文本 - 确保按钮有 btn 类
+    const buttons = $$('.btn'); // 查找所有带有 btn 类的按钮
+    buttons.forEach(btn => {
+        // 如果按钮没有 dataset.originalText，才设置（避免覆盖手动设置的）
+        if (!btn.dataset.originalText) {
+             // 保存原始的 innerHTML
+            btn.dataset.originalText = btn.innerHTML;
+        }
+        // 如果需要 loading text，可以在 HTML 中预先设置 data-loading-text 属性
+        // 或者在这里 JS 中设置，例如：
+        // if (!btn.dataset.loadingText) {
+        //    btn.dataset.loadingText = '处理中...';
+        // }
     });
 
     initEventListeners();
