@@ -1,0 +1,28 @@
+body {
+    padding-top: 20px;
+    background-color: #f8f9fa;
+}
+
+#logArea {
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+
+.table th, .table td {
+    vertical-align: middle;
+}
+
+.progress {
+    border-radius: 0;
+}
+
+.badge {
+    font-weight: normal;
+}
+
+#proxyTable tbody tr:hover {
+    cursor: pointer;
+    background-color: #f1f1f1;
+}
+
+/* 可以添加更多自定义样式 */
