@@ -15,20 +15,19 @@ from flask import Flask, jsonify, render_template, request
 from aiohttp_socks import ProxyConnector  # ✅ 新增
 
 # --- 导入项目内部模块 ---
-# 尝试相对导入（用于包内运行），如果失败则尝试绝对导入（用于直接运行）
 proxy_fetcher = None
 try:
-    # 当作为包的一部分运行时（例如通过 `flask run`）
+    # 尝试相对导入 (当作为包的一部分运行时)
     from . import proxy_fetcher as pf_module
     proxy_fetcher = pf_module
-except (ImportError, ValueError): # ValueError can occur with relative imports in scripts
-    # 当直接运行脚本时，尝试从当前目录导入
+except (ImportError, ValueError): # ValueError for relative import errors in scripts
+    # 尝试绝对导入 (当直接运行脚本时)
     try:
         import proxy_fetcher as pf_module
         proxy_fetcher = pf_module
     except ImportError:
         print("[CRITICAL] Failed to import proxy_fetcher module. Please check your file structure and Python path.")
-        sys.exit(1) # 如果核心模块无法导入，程序无法运行
+        sys.exit(1)
 
 # --- 配置 ---
 # 从 config.json 加载配置
@@ -140,20 +139,31 @@ def load_proxies_from_files():
 # --- 修复 test_single_proxy ---
 async def test_single_proxy(proxy_url, test_url="http://www.google.com/generate_204", timeout=5):
     start_time = time.time()
+    connector = None
     try:
         if proxy_url.startswith('socks5://'):
-            connector = ProxyConnector.from_url(proxy_url)  # ✅ 修复：支持 SOCKS5
+            # 为 SOCKS5 代理创建专用 connector
+            connector = ProxyConnector.from_url(proxy_url)
         else:
+            # 为 HTTP 代理使用默认 TCP connector
             connector = aiohttp.TCPConnector(ssl=False)
 
         async with aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=timeout)) as session:
             async with session.get(test_url) as response:
-                if response.status == 204 or response.status == 200:
+                if response.status in (200, 204):
                     latency = (time.time() - start_time) * 1000
-                    return True, latency
+                    return latency, 'working' # 返回 latency 和状态字符串
+    except asyncio.TimeoutError:
+        # 明确处理超时
+        pass
     except Exception as e:
+        # 记录其他异常，但不中断整体流程
         print(f"[DEBUG] Proxy {proxy_url} failed: {e}")
-    return False, None
+    finally:
+        # 确保 connector 被关闭，特别是对于动态创建的 ProxyConnector
+        if connector:
+            await connector.close() 
+    return None, 'failed' # 返回 None 和状态字符串
 
 
 async def validate_proxies_async(protocol, test_url, num_threads=100):
@@ -166,24 +176,26 @@ async def validate_proxies_async(protocol, test_url, num_threads=100):
         state.logs.append(f"[INFO] {datetime.now().isoformat()} - No {protocol} proxies to validate.")
         return
 
-    timeout = aiohttp.ClientTimeout(total=10) # Overall request timeout
-    # 为所有请求复用一个 connector
-    connector = aiohttp.TCPConnector(limit=num_threads, limit_per_host=10, ttl_dns_cache=300, force_close=True)
+    # 移除在此处创建的共享 connector 和 session
+    # async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+    # 使用信号量控制并发
+    semaphore = asyncio.Semaphore(num_threads)
 
-    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-        semaphore = asyncio.Semaphore(num_threads)
+    # 修正 bound_test 函数，不再传递 session
+    async def bound_test(proxy):
+        async with semaphore:
+            # 调用已修正的 test_single_proxy
+            return await test_single_proxy(proxy, test_url, timeout=10) # 使用与 session 相同的超时
 
-        async def bound_test(proxy):
-            async with semaphore:
-                return await test_single_proxy(session, proxy, test_url, timeout=timeout.total)
-
-        tasks = [bound_test(proxy) for proxy in proxies_to_test]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+    tasks = [bound_test(proxy) for proxy in proxies_to_test]
+    # 使用 return_exceptions=True 来捕获任务中的异常
+    results = await asyncio.gather(*tasks, return_exceptions=True) 
 
     # Process results
     working_proxies = OrderedDict()
     failed_proxies = []
     for proxy, result in zip(proxies_to_test, results):
+        # 处理 gather 中捕获的异常
         if isinstance(result, Exception):
             error_msg = f"[ERROR] Exception during validation of {proxy}: {result}"
             logger.error(error_msg)
@@ -191,29 +203,27 @@ async def validate_proxies_async(protocol, test_url, num_threads=100):
             failed_proxies.append(proxy)
             continue
 
-        response_time, status = result
+        # 处理 test_single_proxy 的返回值 (latency, status)
+        latency, status = result 
         details = state.validated_proxies[protocol].get(proxy, {})
         details['last_checked'] = datetime.now().isoformat()
-        details['response_time'] = response_time
+        details['response_time'] = latency # latency 可能是 None
         details['status'] = status
 
         if status == 'working':
-            # Add to working proxies, maintaining order (re-insert at end if exists)
-            working_proxies[proxy] = details # OrderedDict 会将新键放在末尾
-        else:
+            working_proxies[proxy] = details
+        else: # status == 'failed'
             failed_proxies.append(proxy)
-            # Handle failure counting
             current_failures = state.failed_counts.get(proxy, 0) + 1
             state.failed_counts[proxy] = current_failures
             if current_failures >= state.failure_threshold:
                 info_msg = f"[INFO] Proxy {proxy} failed {current_failures} times, removing."
                 logger.info(info_msg)
                 state.logs.append(info_msg)
-                state.failed_counts.pop(proxy, None) # Remove from failed count after removal
+                state.failed_counts.pop(proxy, None)
             # Note: We rebuild state.validated_proxies[protocol] from working_proxies at the end.
 
     # Update global state
-    # Rebuild validated_proxies for this protocol with only working ones, in order
     state.validated_proxies[protocol] = working_proxies
     success_msg = f"Validation complete for {protocol}. Working: {len(working_proxies)}, Failed: {len(failed_proxies)}"
     logger.info(success_msg)
@@ -309,42 +319,42 @@ def run_fetch_task():
 
 def rotate_proxy(protocol):
     """手动轮换指定协议的代理"""
-    validated_dict = state.validated_proxies.get(protocol, OrderedDict())
-    
-    if not validated_dict:
-        warning_msg = f"No validated proxies available to rotate for protocol: {protocol}"
-        logger.warning(warning_msg)
-        state.logs.append(f"[WARNING] {datetime.now().isoformat()} - {warning_msg}")
-        return None # 表示轮换失败，因为没有代理可轮换
+    # 先获取锁，确保线程安全
+    with state._lock: 
+        validated_dict = state.validated_proxies.get(protocol, OrderedDict())
+        
+        if not validated_dict:
+            warning_msg = f"No validated proxies available to rotate for protocol: {protocol}"
+            logger.warning(warning_msg)
+            state.logs.append(f"[WARNING] {datetime.now().isoformat()} - {warning_msg}")
+            return None
 
-    try:
-        # 使用 popitem(last=False) 获取并移除第一个键值对 (FIFO)
-        proxy, details = validated_dict.popitem(last=False)
-        # 将获取到的代理重新添加到字典末尾，实现轮换效果
-        validated_dict[proxy] = details
-        # 更新全局状态中的代理字典（如果 state.validated_proxies[protocol] 是直接引用，则此步可能非必需，但更安全）
-        state.validated_proxies[protocol] = validated_dict 
-        info_msg = f"Rotated proxy for {protocol}: {proxy}"
-        logger.info(info_msg)
-        # 记录轮换历史
-        state.rotation_history.append({
-            'timestamp': datetime.now().isoformat(),
-            'protocol': protocol,
-            'proxy': proxy
-        })
-         # 限制历史记录大小，例如只保留最后 100 条
-        if len(state.rotation_history) > 100:
-            state.rotation_history.pop(0) # 移除最旧的记录
+        try:
+            # 使用 popitem(last=False) 获取并移除第一个键值对 (FIFO)
+            proxy, details = validated_dict.popitem(last=False)
+            # 将获取到的代理重新添加到字典末尾，实现轮换效果
+            validated_dict[proxy] = details
+            # 更新全局状态中的代理字典 (在锁内完成)
+            state.validated_proxies[protocol] = validated_dict 
+            info_msg = f"Rotated proxy for {protocol}: {proxy}"
+            logger.info(info_msg)
+            # 记录轮换历史
+            state.rotation_history.append({
+                'timestamp': datetime.now().isoformat(),
+                'protocol': protocol,
+                'proxy': proxy
+            })
+            # 限制历史记录大小
+            if len(state.rotation_history) > 100:
+                state.rotation_history.pop(0)
 
-        state.logs.append(f"[INFO] {datetime.now().isoformat()} - {info_msg}")
-        # 返回刚刚被轮换（移动）的那个代理
-        return proxy
-    except Exception as e:
-        error_msg = f"Error rotating proxy for {protocol}: {e}"
-        logger.error(error_msg)
-        state.logs.append(f"[ERROR] {datetime.now().isoformat()} - {error_msg}")
-        # 轮换过程中出错也返回 None
-        return None
+            state.logs.append(f"[INFO] {datetime.now().isoformat()} - {info_msg}")
+            return proxy
+        except Exception as e:
+            error_msg = f"Error rotating proxy for {protocol}: {e}"
+            logger.error(error_msg)
+            state.logs.append(f"[ERROR] {datetime.now().isoformat()} - {error_msg}")
+            return None
 
 
 # --- Flask 路由 ---
@@ -394,22 +404,11 @@ def api_fetch_proxies():
 # --- API 返回统一格式 ---
 @app.route('/api/validate', methods=['POST'])
 def api_validate():
-    try:
-        # ... 你的验证逻辑 ...
-        return jsonify({
-            "success": True,
-            "message": "验证完成",
-            "data": { ... }
-        })
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": str(e)
-        }), 500
-
     data = request.get_json()
-    protocol = data.get('protocol', 'all')
-    if protocol not in ['http', 'socks5', 'all']:
+    protocol = data.get('protocol', 'all'
+)
+    if protocol not in ['http', 'socks5', 'all'
+]:
         return jsonify({"status": "error", "message": "Invalid protocol"}), 400
 
     # 在后台线程运行，避免阻塞 Flask
