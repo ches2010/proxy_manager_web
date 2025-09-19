@@ -16,5 +16,12 @@ app = Flask(
 # 可选：开发时禁用缓存，方便调试
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
-# 导入路由（必须在 app 创建之后）
-from . import routes
+# 注意：不再尝试导入不存在的 'routes' 模块
+# from . import routes  # <-- 这行已删除
+
+# 如果 app/app.py 中的路由是直接通过 @app.route 定义的，
+# 那么这些路由会在 app/app.py 中创建 'app' 实例时被关联起来。
+# launch.py 通过 'app.app:app' 指向的就是这个已经配置好路由的实例。
+
+
+
