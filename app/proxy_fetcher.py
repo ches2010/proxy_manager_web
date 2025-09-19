@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import re
+import time  # ✅ 修复：导入 time 模块以支持 time.sleep
 from pathlib import Path
 
 # --- 配置 ---
@@ -108,7 +109,8 @@ def fetch_proxies_task():
                 except Exception as e:
                     if attempt == 2:
                         raise e
-                    time.sleep(1)
+                    print(f"  [!] 尝试 {attempt + 1} 失败: {e}. 正在重试...")
+                    time.sleep(1) # ✅ 修复：现在 time.sleep 可以正常工作
             
             initial_http_count = len(http_proxies)
             initial_socks5_count = len(socks5_proxies)
@@ -194,3 +196,8 @@ def fetch_proxies_task():
     else:
         print("[FAILURE] 代理获取或保存失败。")
         return False
+
+# --- 脚本入口点 ---
+if __name__ == "__main__":
+    fetch_proxies_task()
+
